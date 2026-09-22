@@ -1,0 +1,24 @@
+# secrets: .env holds GITHUB_TOKEN for live mode. Only .env.example is committed.
+.env
+.env.*
+!.env.example
+
+# spike run artifacts (cached PR data and per-run model output)
+spike/phase0/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Working notes, the exercise brief, and the agent instructions. None of these are
+# part of the deliverable: the repo ships code, config and the README.
+notes/
+CLAUDE.md

@@ -1,0 +1,17 @@
+# Held-out set. Same format as golden.txt: repo  PR  impact=<color>  security=<color>  # note
+# Rules: label from the diff before any model run. Never tune prompts while looking at these results.
+# Run only after a change is finished:  NUM_PREDICT=1500 GOLDEN=heldout.txt ./eval.sh
+
+nickdemianchuk/github-ops                          12    impact=green  security=green  # moves files into different folders and fixes references no functional changes 
+SpineEventEngine/terraform-google-delivery         5     impact=red  security=red  # multiple modules are bumped to new major versions with possible breaking changes, ingress rule allows traffic from 0.0.0.0/0
+wellcomecollection/terraform-aws-vhs               22    impact=green  security=green  # new optional inputs with defaults set to false
+nullplatform/tofu-modules                          581   impact=green  security=green  # new variable pinning addon versions: left out adding keeps resolving to latest version 
+dbildungsplattform/infra-terraform-modules         64    impact=yellow  security=green  # removing variable from a module could cause warnings or errors for root configs calling the module
+bernadin-kabore/platform-demo-terraform-modules    3     impact=yellow  security=yellow  # adds new IAM permissions, variable default changes instance size, which could result in replacement
+tbadmus/tech-challenge                             9     impact=green  security=green  # only makes comment changes
+
+# Alternates:
+# AlgeaCare/gb-terragrunt-modules                  1     impact=?  security=?  # adds prevent_destroy
+# n8n-io/terraform-aws-n8n                         98    impact=?  security=?  # four inputs with defaults
+# pbs-common/terraform-aws-vm-migration            23    impact=?  security=?  # IAM wildcard, admin access via SSM
+# ministryofjustice/modernisation-platform         13964 impact=?  security=?  # broader permissions, no wildcard

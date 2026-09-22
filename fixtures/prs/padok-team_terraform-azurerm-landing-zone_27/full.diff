@@ -1,0 +1,31 @@
+diff --git a/main.tf b/main.tf
+index 54a54ee..04694d5 100644
+--- a/main.tf
++++ b/main.tf
+@@ -98,7 +98,7 @@ resource "azurerm_storage_container" "tfstate_container" {
+ module "law" {
+   ## The deployment of a log analytics workspace is optional (but enabled by default).
+   count  = var.enable_law_logging ? 1 : 0
+-  source = "git@github.com:padok-team/terraform-azurerm-logger.git?ref=v0.4.0"
++  source = "git@github.com:padok-team/terraform-azurerm-logger.git?ref=v0.4.1"
+ 
+   resource_group = {
+     name     = var.log_analytics_workspace_resource_group_name != "" ? azurerm_resource_group.rg_law[0].name : var.resource_group_name,
+@@ -227,7 +227,7 @@ module "backup" {
+ ###################################################################
+ 
+ module "network" {
+-  source = "git@github.com:padok-team/terraform-azurerm-network.git?ref=v0.4.0"
++  source = "git@github.com:padok-team/terraform-azurerm-network.git?ref=v0.4.1"
+   count  = var.enable_network ? 1 : 0
+ 
+   vnet_name      = var.vnet_name
+@@ -239,4 +239,8 @@ module "network" {
+   subnets_service_endpoints = var.subnets_service_endpoints
+ 
+   tags = var.tags
++  depends_on = [
++    azurerm_resource_group.rg_network,
++    azurerm_resource_group.rg
++  ]
+ }

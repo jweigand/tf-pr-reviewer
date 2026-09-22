@@ -1,0 +1,94 @@
+diff --git a/outputs.tf b/outputs.tf
+index f7f8365..a5e407e 100644
+--- a/outputs.tf
++++ b/outputs.tf
+@@ -1,7 +1,3 @@
+ output "repos" {
+-  value = {
+-    actions    = module.actions.full_name
+-    claude-ops = module.claude-ops.full_name
+-    github-ops = module.github-ops.full_name
+-  }
++  value = module.repos.repos
+ }
+diff --git a/repos.tf b/repos.tf
+new file mode 100644
+index 0000000..bfe8f9b
+--- /dev/null
++++ b/repos.tf
+@@ -0,0 +1,6 @@
++module "repos" {
++  source = "./repos"
++  providers = {
++    github = github
++  }
++}
+diff --git a/actions.tf b/repos/actions.tf
+similarity index 93%
+rename from actions.tf
+rename to repos/actions.tf
+index 136ec7b..e959bb9 100644
+--- a/actions.tf
++++ b/repos/actions.tf
+@@ -1,5 +1,5 @@
+ module "actions" {
+-  source = "./modules/github-repo"
++  source = "../modules/github-repo"
+   providers = {
+     github = github
+   }
+diff --git a/claude-ops.tf b/repos/claude-ops.tf
+similarity index 93%
+rename from claude-ops.tf
+rename to repos/claude-ops.tf
+index ed73f5d..3ced481 100644
+--- a/claude-ops.tf
++++ b/repos/claude-ops.tf
+@@ -1,5 +1,5 @@
+ module "claude-ops" {
+-  source = "./modules/github-repo"
++  source = "../modules/github-repo"
+   providers = {
+     github = github
+   }
+diff --git a/github-ops.tf b/repos/github-ops.tf
+similarity index 95%
+rename from github-ops.tf
+rename to repos/github-ops.tf
+index 80a2320..c7d9514 100644
+--- a/github-ops.tf
++++ b/repos/github-ops.tf
+@@ -1,5 +1,5 @@
+ module "github-ops" {
+-  source = "./modules/github-repo"
++  source = "../modules/github-repo"
+   providers = {
+     github = github
+   }
+diff --git a/repos/outputs.tf b/repos/outputs.tf
+new file mode 100644
+index 0000000..f7f8365
+--- /dev/null
++++ b/repos/outputs.tf
+@@ -0,0 +1,7 @@
++output "repos" {
++  value = {
++    actions    = module.actions.full_name
++    claude-ops = module.claude-ops.full_name
++    github-ops = module.github-ops.full_name
++  }
++}
+diff --git a/repos/versions.tf b/repos/versions.tf
+new file mode 100644
+index 0000000..e507d1c
+--- /dev/null
++++ b/repos/versions.tf
+@@ -0,0 +1,8 @@
++terraform {
++  required_providers {
++    github = {
++      source  = "integrations/github"
++      version = "~> 6.13"
++    }
++  }
++}

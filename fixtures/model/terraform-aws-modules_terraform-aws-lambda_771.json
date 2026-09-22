@@ -1,0 +1,34 @@
+{
+  "repo": "terraform-aws-modules/terraform-aws-lambda",
+  "pr_number": 771,
+  "model": "qwen3.5:9b",
+  "model_seconds": 46.15,
+  "done_reason": "stop",
+  "retried": false,
+  "prompt_tokens": 1603,
+  "impact": {
+    "findings": [],
+    "dismissed": [],
+    "confidence": "high",
+    "summary": "The PR introduces a new optional variable `assume_role_conditions` with a default of `[]`, ensuring backward compatibility. The diff shows no removal of resources, no renaming of existing variables, and no changes to default behaviors for existing users who do not set this variable. The change is additive and does not impact existing infrastructure or code."
+  },
+  "security": {
+    "findings": [],
+    "dismissed": [
+      {
+        "item": "Network exposure",
+        "reason": "No network-related resources or ingress rules are present in the diff."
+      },
+      {
+        "item": "IAM over-permissioning",
+        "reason": "The diff only adds conditions to restrict trust, which improves security rather than broadening it."
+      },
+      {
+        "item": "Secrets handling",
+        "reason": "No literal secrets or passwords are introduced in the code changes."
+      }
+    ],
+    "confidence": "high",
+    "summary": "The diff introduces a security improvement by allowing IAM conditions on the Lambda trust policy to prevent confused-deputy attacks; no security regressions or misconfigurations are present."
+  }
+}

@@ -1,0 +1,276 @@
+diff --git a/examples/basic/main.tf b/examples/basic/main.tf
+index 95d87bf..000f250 100644
+--- a/examples/basic/main.tf
++++ b/examples/basic/main.tf
+@@ -8,7 +8,6 @@ module "postgresql_server" {
+   source = "../.."
+ 
+   name                = random_pet.this.id
+-  resource_group_name = azurerm_resource_group.this.name
+-  location            = azurerm_resource_group.this.location
++  resource_group      = azurerm_resource_group.this
+   administrator_login = "admintest"
+ }
+diff --git a/examples/private/_settings.tf b/examples/private/_settings.tf
+new file mode 100644
+index 0000000..e61abc7
+--- /dev/null
++++ b/examples/private/_settings.tf
+@@ -0,0 +1,18 @@
++terraform {
++  required_version = ">= 1.0.0"
++  required_providers {
++    azurerm = {
++      source  = "hashicorp/azurerm"
++      version = "~> 3"
++    }
++    random = {
++      source  = "hashicorp/random"
++      version = "~>3.4"
++    }
++  }
++}
++
++provider "azurerm" {
++  skip_provider_registration = true
++  features {}
++}
+diff --git a/examples/private/main.tf b/examples/private/main.tf
+new file mode 100644
+index 0000000..4d00f2e
+--- /dev/null
++++ b/examples/private/main.tf
+@@ -0,0 +1,21 @@
++resource "random_pet" "this" {}
++
++resource "azurerm_resource_group" "this" {
++  name     = random_pet.this.id
++  location = "France Central"
++}
++
++module "postgresql_server" {
++  source = "../.."
++
++  name                   = random_pet.this.id
++  resource_group         = azurerm_resource_group.this
++  administrator_login    = "admintest"
++  administrator_password = "padok"
++
++  private_endpoint = {
++    enable              = true
++    subnet_id           = azurerm_subnet.this.id
++    private_dns_zone_id = azurerm_private_dns_zone.this.id
++  }
++}
+diff --git a/examples/private/network.tf b/examples/private/network.tf
+new file mode 100644
+index 0000000..cbf1f65
+--- /dev/null
++++ b/examples/private/network.tf
+@@ -0,0 +1,31 @@
++resource "azurerm_virtual_network" "this" {
++  resource_group_name = azurerm_resource_group.this.name
++  location            = azurerm_resource_group.this.location
++
++  name = random_pet.this.id
++
++  address_space = ["10.0.0.0/24"]
++}
++
++resource "azurerm_subnet" "this" {
++  resource_group_name  = azurerm_resource_group.this.name
++  virtual_network_name = azurerm_virtual_network.this.name
++
++  name = random_pet.this.id
++
++  address_prefixes = ["10.0.0.0/28"]
++}
++
++resource "azurerm_private_dns_zone" "this" {
++  # https://learn.microsoft.com/fr-fr/azure/private-link/private-endpoint-dns#azure-services-dns-zone-configuration
++  name                = "privatelink.postgres.database.azure.com"
++  resource_group_name = azurerm_resource_group.this.name
++}
++
++resource "azurerm_private_dns_zone_virtual_network_link" "this" {
++  name                = random_pet.this.id
++  resource_group_name = azurerm_resource_group.this.name
++  virtual_network_id  = azurerm_virtual_network.this.id
++
++  private_dns_zone_name = azurerm_private_dns_zone.this.name
++}
+diff --git a/main.tf b/main.tf
+index c943a19..45300f6 100644
+--- a/main.tf
++++ b/main.tf
+@@ -9,6 +9,13 @@ locals {
+   backup_databases = var.backup_configuration != null ? toset(keys(var.databases)) : toset([])
+ }
+ 
++resource "random_string" "random" {
++  length  = 6
++  special = false
++  upper   = false
++}
++
++
+ resource "random_password" "this" {
+   # Generate a random password if the administrator_password is not set
+   count  = var.administrator_password != null ? 0 : 1
+@@ -17,8 +24,8 @@ resource "random_password" "this" {
+ 
+ resource "azurerm_postgresql_server" "this" {
+   name                = var.name
+-  resource_group_name = var.resource_group_name
+-  location            = var.location
++  resource_group_name = var.resource_group.name
++  location            = var.resource_group.location
+ 
+   sku_name   = var.sku_name
+   storage_mb = var.storage_mb
+@@ -61,7 +68,7 @@ resource "azurerm_postgresql_database" "these" {
+   for_each = var.databases
+ 
+   name                = each.key
+-  resource_group_name = var.resource_group_name
++  resource_group_name = var.resource_group.name
+   server_name         = azurerm_postgresql_server.this.name
+   charset             = each.value.charset != null ? each.value.charset : "UTF8"
+   collation           = each.value.collation != null ? each.value.collation : "en_US.UTF8"
+@@ -78,7 +85,7 @@ resource "azurerm_postgresql_server_key" "this" {
+ resource "azurerm_postgresql_firewall_rule" "these" {
+   for_each            = var.firewall_rules
+   name                = each.key
+-  resource_group_name = var.resource_group_name
++  resource_group_name = var.resource_group.name
+   server_name         = azurerm_postgresql_server.this.name
+   start_ip_address    = each.value.start_ip_address
+   end_ip_address      = each.value.end_ip_address
+@@ -88,7 +95,7 @@ resource "azurerm_data_protection_backup_instance_postgresql" "these" {
+   for_each = local.backup_databases
+ 
+   name                                    = each.key
+-  location                                = var.location
++  location                                = var.resource_group.location
+   database_id                             = azurerm_postgresql_database.these[each.key].id
+   vault_id                                = var.backup_configuration.vault_id
+   backup_policy_id                        = var.backup_configuration.backup_policy_id
+@@ -102,14 +109,14 @@ resource "azurerm_data_protection_backup_instance_postgresql" "these" {
+ 
+ resource "azurerm_postgresql_configuration" "connection_throttling" {
+   name                = "connection_throttling"
+-  resource_group_name = var.resource_group_name
++  resource_group_name = var.resource_group.name
+   server_name         = azurerm_postgresql_server.this.name
+   value               = "on"
+ }
+ 
+ resource "azurerm_postgresql_configuration" "log_checkpoints" {
+   name                = "log_checkpoints"
+-  resource_group_name = var.resource_group_name
++  resource_group_name = var.resource_group.name
+   server_name         = azurerm_postgresql_server.this.name
+   value               = "on"
+ }
+@@ -117,7 +124,7 @@ resource "azurerm_postgresql_configuration" "log_checkpoints" {
+ resource "azurerm_postgresql_configuration" "these" {
+   for_each            = local.pg_configs
+   name                = each.key
+-  resource_group_name = var.resource_group_name
++  resource_group_name = var.resource_group.name
+   server_name         = azurerm_postgresql_server.this.name
+   value               = each.value
+ }
+diff --git a/network.tf b/network.tf
+new file mode 100644
+index 0000000..9934173
+--- /dev/null
++++ b/network.tf
+@@ -0,0 +1,22 @@
++resource "azurerm_private_endpoint" "this" {
++  count = var.private_endpoint.enable ? 1 : 0
++
++  name                = var.name
++  resource_group_name = var.resource_group.name
++  location            = var.resource_group.location
++  subnet_id           = var.private_endpoint.subnet_id
++
++  private_dns_zone_group {
++    name                 = "default"
++    private_dns_zone_ids = [var.private_endpoint.private_dns_zone_id]
++  }
++
++  # Reference: https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-overview#private-link-resource
++  private_service_connection {
++    name                           = var.name
++    is_manual_connection           = false
++    private_connection_resource_id = azurerm_postgresql_server.this.id
++    subresource_names              = ["postgresqlServer"]
++  }
++  tags = var.tags
++}
+diff --git a/variables.tf b/variables.tf
+index eec09e1..00c5669 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -3,20 +3,12 @@ variable "name" {
+   description = "The name of the PostgreSQL server."
+ }
+ 
+-variable "resource_group_name" {
+-  type        = string
+-  description = "The name of the resource group containing the PostgreSQL server."
+-}
+-
+-variable "location" {
+-  type        = string
+-  description = "The location of the PostgreSQL server."
+-}
+-
+-variable "sku_name" {
+-  type        = string
+-  description = "Specifies the SKU Name for this PostgreSQL Server. The name of the SKU follows the tier + family + cores pattern (e.g. B_Gen4_1, GP_Gen5_8)."
+-  default     = "GP_Gen5_2"
++variable "resource_group" {
++  description = "The resource group configuration."
++  type = object({
++    name     = string
++    location = string
++  })
+ }
+ 
+ variable "administrator_login" {
+@@ -30,6 +22,12 @@ variable "administrator_password" {
+   default     = null
+ }
+ 
++variable "sku_name" {
++  type        = string
++  description = "Specifies the SKU Name for this PostgreSQL Server. The name of the SKU follows the tier + family + cores pattern (e.g. B_Gen4_1, GP_Gen5_8)."
++  default     = "GP_Gen5_2"
++}
++
+ variable "storage_mb" {
+   type        = number
+   description = "The max storage size of the PostgreSQL Server. Possible values are between 5120 MB(5GB) and 1048576 MB(1TB) for the Basic SKU and between 5120 MB(5GB) and 16777216 MB(16TB) for General Purpose/Memory Optimized SKUs."
+@@ -136,6 +134,20 @@ variable "firewall_rules" {
+   default = {}
+ }
+ 
++variable "private_endpoint" {
++  description = "The private endpoint configuration."
++  type = object({
++    enable              = bool,
++    subnet_id           = string
++    private_dns_zone_id = string,
++  })
++  default = {
++    enable              = false
++    subnet_id           = null
++    private_dns_zone_id = null
++  }
++}
++
+ variable "tags" {
+   type        = map(string)
+   description = "A mapping of tags to assign to the PostgreSQL server."

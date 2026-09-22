@@ -1,0 +1,54 @@
+{
+  "repo": "padok-team/terraform-azurerm-postgresql-server",
+  "pr_number": 15,
+  "model": "qwen3.5:9b",
+  "model_seconds": 67.44,
+  "done_reason": "stop",
+  "retried": false,
+  "prompt_tokens": 3216,
+  "impact": {
+    "findings": [
+      {
+        "file": "variables.tf",
+        "evidence": "- variable \"resource_group_name\" {\n-   type        = string\n-   description = \"The name of the resource group containing the PostgreSQL server.\"\n- }\n-\n- variable \"location\" {\n-   type        = string\n-   description = \"The location of the PostgreSQL server.\"\n- }\n-\n- variable \"sku_name\" {\n-   type        = string\n-   description = \"Specifies the SKU Name for this PostgreSQL Server. The name of the SKU follows the tier + family + cores pattern (e.g. B_Gen4_1, GP_Gen5_8).\"\n-   default     = \"GP_Gen5_2\"\n+variable \"resource_group\" {\n+  description = \"The resource group configuration.\"\n+  type = object({\n+    name     = string\n+    location = string\n+  })\n+}\n+variable \"sku_name\" {\n+  type        = string\n+  description = \"Specifies the SKU Name for this PostgreSQL Server. The name of the SKU follows the tier + family + cores pattern (e.g. B_Gen4_1, GP_Gen5_8).\"\n+  default     = \"GP_Gen5_2\"\n+}",
+        "explanation": "module_interface_change: The variables `resource_group_name` and `location` were removed and replaced by a single object `resource_group`, breaking existing callers passing these as separate arguments.",
+        "category": "module_interface_change",
+        "severity": "high"
+      }
+    ],
+    "dismissed": [],
+    "confidence": "high",
+    "summary": "The PR breaks backward compatibility by changing the module's input interface from two separate string variables (`resource_group_name`, `location`) to a single object (`resource_group`), which will cause existing Terraform configurations using the old variable names to fail."
+  },
+  "security": {
+    "findings": [
+      {
+        "file": "examples/private/main.tf",
+        "evidence": "  administrator_password = \"padok\"",
+        "explanation": "A literal password is hardcoded in an example file, which is a security risk if the file is committed to version control.",
+        "category": "secret_exposure",
+        "severity": "medium"
+      }
+    ],
+    "dismissed": [
+      {
+        "item": "Network exposure",
+        "reason": "The diff introduces a private endpoint and removes public access variables; no new public ingress rules are added."
+      },
+      {
+        "item": "IAM/Role grants",
+        "reason": "No IAM or role grant configurations are present in the diff."
+      },
+      {
+        "item": "Encryption",
+        "reason": "No encryption settings are modified or disabled in the diff."
+      },
+      {
+        "item": "Logging/Auditing",
+        "reason": "No logging or auditing configurations are present in the diff."
+      }
+    ],
+    "confidence": "high",
+    "summary": "The primary security issue is the hardcoded password in the example file."
+  }
+}

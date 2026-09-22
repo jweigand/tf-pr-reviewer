@@ -1,0 +1,46 @@
+# Filter and project one GitHub Search API issue item into a pr.candidates record.
+#
+# Shared by ingest-replay.yaml and ingest-live.yaml so replay exercises exactly the
+# filter that live traffic gets. Returns deleted() for anything not worth a model call.
+#
+# Measured against fixtures/search/page-01.json, a real 100-item page:
+#   100 in -> 66 bots -> 3 drafts -> 15 dependency updates -> 16 out.
+
+# Defined as a map so both ingest configs can import this one file:
+#   import "/connect/resources/filter.blobl"
+#   root = this.apply("filter_and_project")
+
+map filter_and_project {
+  # Both bot signals are checked even though they agreed on all 100 items of the
+  # recorded page. On GitHub Enterprise, where the customer is, integration accounts
+  # are often plain users and the [bot] suffix convention is not enforced.
+  let is_bot = this.user.type == "Bot" || this.user.login.lowercase().has_suffix("[bot]")
+
+  let is_draft = this.draft.or(false)
+
+  # Dependency automation running under an ordinary user account, which the bot check
+  # cannot see. 15 of the 31 survivors on the recorded page were these. The signal is
+  # in the title, not the identity, so a pattern is the right tool: deleting the model
+  # here loses nothing, because a version bump has no impact story to tell.
+  let is_deps = this.title.re_match("(?i)^(chore|fix|build)\\(deps\\)") ||
+                this.title.re_match("(?i)^update (dependency|.*docker (tag|digest)|.*helm release|.*to v[0-9])")
+
+  root = if $is_bot || $is_draft || $is_deps {
+    deleted()
+  } else {
+    {
+      # repository_url is the API form, https://api.github.com/repos/owner/name
+      "repo": this.repository_url.replace_all("https://api.github.com/repos/", ""),
+      "pr_number": this.number,
+      "title": this.title,
+      "body": this.body.or(null),
+      "author": this.user.login,
+      "html_url": this.html_url,
+      "pr_updated_at": this.updated_at,
+      # Where the service fetches the PR detail and the diff. Search results carry no
+      # head SHA, so dedupe on the SHA has to happen after this fetch, in the service.
+      "pr_api_url": this.pull_request.url,
+      "search_id": this.id
+    }
+  }
+}

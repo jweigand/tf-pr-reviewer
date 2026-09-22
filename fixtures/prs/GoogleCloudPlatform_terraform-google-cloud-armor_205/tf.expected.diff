@@ -1,0 +1,80 @@
+diff --git a/main.tf b/main.tf
+index d904a27..5623103 100644
+--- a/main.tf
++++ b/main.tf
+@@ -146,7 +146,7 @@ resource "google_compute_security_policy" "policy" {
+           enforce_on_key_name = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(rule.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+           dynamic "enforce_on_key_configs" {
+-            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+             content {
+               enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+               enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -279,7 +279,7 @@ resource "google_compute_security_policy" "policy" {
+           enforce_on_key_name = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(rule.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+           dynamic "enforce_on_key_configs" {
+-            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+             content {
+               enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+               enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -377,7 +377,7 @@ resource "google_compute_security_policy" "policy" {
+           enforce_on_key_name = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(rule.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+           dynamic "enforce_on_key_configs" {
+-            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+             content {
+               enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+               enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -501,7 +501,7 @@ resource "google_compute_security_policy" "policy" {
+           enforce_on_key_name = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(rule.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+           dynamic "enforce_on_key_configs" {
+-            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+             content {
+               enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+               enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -631,7 +631,7 @@ resource "google_compute_security_policy" "policy" {
+           enforce_on_key_name = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(rule.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+           dynamic "enforce_on_key_configs" {
+-            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++            for_each = lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(rule.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+             content {
+               enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+               enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+diff --git a/modules/regional-backend-security-policy/main.tf b/modules/regional-backend-security-policy/main.tf
+index d0823da..e438714 100644
+--- a/modules/regional-backend-security-policy/main.tf
++++ b/modules/regional-backend-security-policy/main.tf
+@@ -118,7 +118,7 @@ resource "google_compute_region_security_policy_rule" "security_rules" {
+       enforce_on_key_name = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(each.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+       dynamic "enforce_on_key_configs" {
+-        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+         content {
+           enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+           enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -177,7 +177,7 @@ resource "google_compute_region_security_policy_rule" "custom_rules" {
+       enforce_on_key_name = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(each.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+       dynamic "enforce_on_key_configs" {
+-        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+         content {
+           enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+           enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name
+@@ -281,7 +281,7 @@ resource "google_compute_region_security_policy_rule" "pre_configured_rules" {
+       enforce_on_key_name = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? lookup(each.value["rate_limit_options"], "enforce_on_key_name", null) : null
+ 
+       dynamic "enforce_on_key_configs" {
+-        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : x.enforce_on_key_type => x }
++        for_each = lookup(each.value["rate_limit_options"], "enforce_on_key_configs") == null ? {} : { for x in lookup(each.value["rate_limit_options"], "enforce_on_key_configs") : "${x.enforce_on_key_type}/${x.enforce_on_key_name == null ? "" : x.enforce_on_key_name}" => x }
+         content {
+           enforce_on_key_type = enforce_on_key_configs.value.enforce_on_key_type
+           enforce_on_key_name = enforce_on_key_configs.value.enforce_on_key_name

@@ -1,0 +1,15 @@
+diff --git a/eks.tf b/eks.tf
+index b8dc700..160e96d 100644
+--- a/eks.tf
++++ b/eks.tf
+@@ -46,8 +46,8 @@ module "eks" {
+     default = {
+       instance_types = ["t3.small"]
+       min_size       = 1
+-      max_size       = 2
+-      desired_size   = 2
++      max_size       = 3
++      desired_size   = 3
+       subnet_ids     = module.vpc.private_subnets
+     }
+   }

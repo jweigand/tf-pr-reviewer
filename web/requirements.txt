@@ -1,0 +1,2 @@
+# Postgres driver. The binary build so the image needs no compiler.
+psycopg[binary]==3.2.3

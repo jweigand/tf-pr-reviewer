@@ -1,0 +1,144 @@
+diff --git a/.checkov.yml b/.checkov.yml
+index c41f930..dbb6804 100644
+--- a/.checkov.yml
++++ b/.checkov.yml
+@@ -83,9 +83,9 @@ skip-check:
+ 
+   # --- Accepted debt, NOT a false positive --------------------------------
+   # CKV_AWS_274 AdministratorAccess on the CI apply role. Checkov is right and
+-  # this is a real compromise, documented in github-oidc.tf rather than hidden:
+-  # a least-privilege policy for a stack that creates VPCs, EKS clusters, IAM
+-  # roles, ACM certificates and Route53 records would be enormous and brittle.
++  # this is a real compromise, documented in bootstrap/github-oidc.tf rather than
++  # hidden: a least-privilege policy for a stack that creates VPCs, EKS clusters,
++  # IAM roles, ACM certificates and Route53 records would be enormous and brittle.
+   # Mitigated by an explicit Deny -- which beats any Allow -- on the state
+   # bucket, route53domains:*, organizations, account, and iam:CreateAccessKey.
+   # The production fix is a permissions boundary on everything the role creates.
+diff --git a/Makefile b/Makefile
+index 313108f..b00b191 100644
+--- a/Makefile
++++ b/Makefile
+@@ -197,6 +197,23 @@ deploy: ## Deploy the application by digest
+ 	kubectl apply -k "$$TMP/k8s"; rm -rf "$$TMP"; \
+ 	kubectl -n demo rollout status deploy/hello-world --timeout=300s
+ 
++# Same temp-render approach as `deploy`, plus the certificate ARN and hostname
++# injected from Terraform outputs -- so the tracked manifests carry no account
++# id and no environment-specific hostname.
++deploy-tls: ## Deploy the application over HTTPS (requires enable_dns and a resolvable domain)
++	@IMG=$$(cat .backend/$(ENV).image 2>/dev/null) || { echo "run 'make image' first"; exit 1; }; \
++	CERT=$$($(TF) output -raw app_certificate_arn 2>/dev/null); \
++	FQDN=$$($(TF) output -raw app_fqdn 2>/dev/null); \
++	if [ -z "$$CERT" ] || [ -z "$$FQDN" ]; then \
++	  echo "enable_dns is off, or the certificate is not issued yet -- see dns.tf"; exit 1; fi; \
++	TMP=$$(mktemp -d); cp -R app/k8s app/k8s-tls "$$TMP"/; \
++	(cd "$$TMP/k8s" && kustomize edit set image "hello-world=$$IMG" 2>/dev/null \
++	   || sed -i.bak "s|newName:.*|newName: $${IMG%@*}|; s|digest:.*|digest: $${IMG#*@}|" kustomization.yaml); \
++	sed -i.bak -e "s|CERT_ARN_PLACEHOLDER|$$CERT|" -e "s|FQDN_PLACEHOLDER|$$FQDN|" "$$TMP/k8s-tls/ingress-tls.yaml"; \
++	kubectl apply -k "$$TMP/k8s-tls"; rm -rf "$$TMP"; \
++	kubectl -n demo rollout status deploy/hello-world --timeout=300s; \
++	echo "  https://$$FQDN"
++
+ url: ## Print the public URL of the application
+ 	@H=$$(kubectl -n demo get ingress hello-world -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null); \
+ 	F=$$($(TF) output -raw app_fqdn 2>/dev/null); \
+diff --git a/backend.tf b/backend.tf
+index 67f9c1d..d364c25 100644
+--- a/backend.tf
++++ b/backend.tf
+@@ -3,7 +3,10 @@
+ # Bucket, key and region are supplied per environment so that dev and prod
+ # never share a state file:
+ #
+-#   terraform init -backend-config=environments/dev.s3.tfbackend
++#   make init ENV=dev
++#
++# The config is GENERATED into .backend/ at init time rather than committed,
++# because the bucket name embeds the AWS account id.
+ #
+ # Locking uses S3 conditional writes (`use_lockfile`), available since
+ # Terraform 1.11. The separate DynamoDB lock table older guides describe is
+diff --git a/cluster-addons/README.md b/cluster-addons/README.md
+index bc8a059..6d035b1 100644
+--- a/cluster-addons/README.md
++++ b/cluster-addons/README.md
+@@ -39,16 +39,18 @@ Requires network access to the cluster API — so either an allowlisted IP, or
+ the SSM tunnel:
+ 
+ ```bash
+-make tunnel ENV=dev          # in another shell, if your IP is not allowlisted
+-cd cluster-addons
+-terraform init -backend-config=../environments/dev.s3.tfbackend -backend-config="key=dev/cluster-addons.tfstate"
+-terraform apply -var-file=../environments/dev.tfvars
++make tunnel ENV=dev            # in another shell, if your IP is not allowlisted
++make addons-init  ENV=dev
++make addons-apply ENV=dev
+ ```
+ 
+-Or from the repo root: `make addons-plan ENV=dev` / `make addons-apply ENV=dev`.
++`make` derives the state bucket from the AWS account and generates the backend
++config at init time, so there is nothing to edit and no committed backend file.
+ 
+ ## Where the inputs come from
+ 
+-Cluster coordinates and the Pod Identity role ARNs are read from the
+-infrastructure root's state via `terraform_remote_state`. That is a read-only
+-dependency in one direction: infrastructure knows nothing about addons.
++Cluster coordinates, the region, the Pod Identity role ARNs, and the DNS
++settings are all read from the infrastructure root's state via
++`terraform_remote_state`. That is a read-only dependency in one direction:
++infrastructure knows nothing about addons, and nothing is restated in a second
++tfvars file where the two could drift apart.
+diff --git a/docs/adr/0007-dns-and-tls.md b/docs/adr/0007-dns-and-tls.md
+index 355040a..6cd9fad 100644
+--- a/docs/adr/0007-dns-and-tls.md
++++ b/docs/adr/0007-dns-and-tls.md
+@@ -54,6 +54,26 @@ defaulting to **false**.
+   plaintext. TLS terminates at the load balancer; traffic from ALB to pod stays
+   inside the VPC.
+ 
++## Superseded — registration removed entirely
++
++**Status of the amendment below: superseded.** Making the stack deployable into
++any AWS account removed domain registration from the project altogether.
++`domain.tf`, the registration variables, the `us-east-1` provider alias that
++existed only for the Route53 Domains API, and
++`environments/dev.domain.tfvars.example` are all gone.
++
++The stack now expects a domain that **already exists** and is publicly
++resolvable, with a hosted zone in the target account. The zone is resolved by
++*name* rather than by id, because zone ids differ in every account, and
++`enable_dns` defaults to false so the stack deploys into a bare account with no
++DNS prerequisites at all.
++
++The reasoning in the amendment is kept because the failure modes it documents
++are still real and still worth knowing — the registrar creating a second hosted
++zone, `glue_ips` needing to be null rather than `[]`, and a failed apply
++tainting a resource that cannot be recreated. They are simply no longer this
++repository's problem.
++
+ ## Amendment — registration is in the project
+ 
+ `aws_route53domains_domain` registers a domain, so the registration itself is
+diff --git a/optional/jenkins/README.md b/optional/jenkins/README.md
+index 30fd038..6e41c35 100644
+--- a/optional/jenkins/README.md
++++ b/optional/jenkins/README.md
+@@ -4,7 +4,11 @@ Superseded by `.github/workflows/` per ADR-0003. Kept because Jenkins is still
+ what many engineers meet in the field, and because reading the two side by side
+ is the clearest way to see what changed and why.
+ 
+-**This file is not wired to anything.** It is reading material.
++**Nothing here is wired to anything.** It is reading material. `sonar-project.properties`
++sits alongside the Jenkinsfile for the same reason: it configured a scanner that
++only the Jenkins pipeline ever invoked, and it pointed at `sonar.sources=app` --
++a ten-line JavaScript file -- while the Terraform, where the real exposure was,
++went unexamined.
+ 
+ ## What was wrong with it
+ 
+diff --git a/sonar-project.properties b/optional/jenkins/sonar-project.properties
+similarity index 100%
+rename from sonar-project.properties
+rename to optional/jenkins/sonar-project.properties

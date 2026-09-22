@@ -1,0 +1,362 @@
+diff --git a/modules/1_prepare/outputs.tf b/modules/1_prepare/outputs.tf
+index 8bd617deb..9000f013a 100644
+--- a/modules/1_prepare/outputs.tf
++++ b/modules/1_prepare/outputs.tf
+@@ -42,17 +42,17 @@ output "public_cidr" {
+ 
+ output "bastion_vip" {
+   depends_on = [null_resource.bastion_init]
+-  value      = local.bastion_count > 1 ? ibm_pi_network_port.bastion_vip[0].pi_network_port_ipaddress : ""
++  value      = local.bastion_count > 1 ? ibm_pi_network_interface.bastion_vip[0].ip_address : ""
+ }
+ 
+ output "bastion_internal_vip" {
+   depends_on = [null_resource.bastion_init]
+-  value      = local.bastion_count > 1 ? ibm_pi_network_port.bastion_internal_vip[0].pi_network_port_ipaddress : ""
++  value      = local.bastion_count > 1 ? ibm_pi_network_interface.bastion_internal_vip[0].ip_address : ""
+ }
+ 
+ output "bastion_external_vip" {
+   depends_on = [null_resource.bastion_init]
+-  value      = local.bastion_count > 1 ? ibm_pi_network_port.bastion_internal_vip[0].public_ip : ""
++  value      = local.bastion_count > 1 ? ibm_pi_network_interface.bastion_internal_vip[0].ip_address : ""
+ }
+ 
+ output "cloud_connection_name" {
+diff --git a/modules/1_prepare/prepare.tf b/modules/1_prepare/prepare.tf
+index 78968c76d..6e74f0b65 100644
+--- a/modules/1_prepare/prepare.tf
++++ b/modules/1_prepare/prepare.tf
+@@ -52,10 +52,8 @@ locals {
+   bastion_storage_type = !local.invalid_bastion_image && length(local.project_bastion_image) != 0 ? local.project_bastion_image[0].storage_type : null
+ }
+ 
+-# Copy image from catalog if not in the project and present in catalog
+ resource "ibm_pi_image" "bastion" {
+   count                = length(local.project_bastion_image) == 0 && length(local.catalog_bastion_image) == 1 ? 1 : 0
+-  pi_image_name        = var.rhel_image_name
+   pi_image_id          = local.catalog_bastion_image[0].image_id
+   pi_cloud_instance_id = var.service_instance_id
+ }
+@@ -84,7 +82,7 @@ resource "ibm_pi_volume" "volume" {
+   pi_volume_size       = var.volume_size
+   pi_volume_name       = "${var.name_prefix}${var.storage_type}-volume"
+   pi_volume_pool       = local.bastion_storage_pool
+-  pi_volume_type       = local.bastion_storage_type
++  pi_volume_type       = local.bastion_storage_type == "" && local.bastion_storage_pool == "" ? "tier3" : local.bastion_storage_type
+   pi_volume_shareable  = var.volume_shareable
+   pi_cloud_instance_id = var.service_instance_id
+ }
+@@ -103,7 +101,7 @@ resource "ibm_pi_instance" "bastion" {
+   pi_health_status     = var.bastion_health_status
+   pi_volume_ids        = var.storage_type == "nfs" ? ibm_pi_volume.volume.*.volume_id : null
+   pi_storage_pool      = local.bastion_storage_pool
+-  pi_storage_type      = local.bastion_storage_type
++  pi_storage_type      = local.bastion_storage_type == "" && local.bastion_storage_pool == "" ? "tier3" : local.bastion_storage_type
+ 
+   pi_network {
+     network_id = ibm_pi_network.public_network.network_id
+@@ -368,7 +366,7 @@ resource "null_resource" "bastion_packages" {
+ 
+   provisioner "remote-exec" {
+     inline = [
+-      "#sudo yum update -y --skip-broken",
++      "sudo yum update -y --skip-broken",
+       "sudo yum install -y wget jq git net-tools vim python3 tar"
+     ]
+   }
+@@ -449,20 +447,41 @@ resource "null_resource" "rhel83_fix" {
+   }
+ }
+ 
+-resource "ibm_pi_network_port" "bastion_vip" {
++resource "null_resource" "force_use_utc" {
++  count      = var.force_utc ? local.bastion_count : 0
++  depends_on = [null_resource.rhel83_fix]
++
++  connection {
++    type        = "ssh"
++    user        = var.rhel_username
++    host        = data.ibm_pi_instance_ip.bastion_public_ip[count.index].external_ip
++    private_key = var.private_key
++    agent       = var.ssh_agent
++    timeout     = "${var.connection_timeout}m"
++  }
++  provisioner "remote-exec" {
++    inline = [
++      "sudo timedatectl set-timezone UTC",
++    ]
++  }
++}
++
++resource "ibm_pi_network_interface" "bastion_vip" {
+   count      = local.bastion_count > 1 ? 1 : 0
+   depends_on = [ibm_pi_instance.bastion]
+ 
+-  pi_network_name      = data.ibm_pi_network.network.pi_network_name
+   pi_cloud_instance_id = var.service_instance_id
++  pi_network_id        = data.ibm_pi_network.network.id
++  pi_name              = "bastion_vip"
+ }
+ 
+-resource "ibm_pi_network_port" "bastion_internal_vip" {
++resource "ibm_pi_network_interface" "bastion_internal_vip" {
+   count      = local.bastion_count > 1 ? 1 : 0
+   depends_on = [ibm_pi_instance.bastion]
+ 
+-  pi_network_name      = ibm_pi_network.public_network.pi_network_name
+   pi_cloud_instance_id = var.service_instance_id
++  pi_network_id        = ibm_pi_network.public_network.id
++  pi_name              = "bastion_internal_vip"
+ }
+ 
+ resource "ibm_pi_cloud_connection" "cloud_connection" {
+diff --git a/modules/1_prepare/variables.tf b/modules/1_prepare/variables.tf
+index 458aa6ef2..f758e4163 100644
+--- a/modules/1_prepare/variables.tf
++++ b/modules/1_prepare/variables.tf
+@@ -82,3 +82,4 @@ variable "proxy" {}
+ variable "fips_compliant" {}
+ 
+ variable "create_cloud_connection" {}
++variable "force_utc" {}
+diff --git a/modules/1_prepare/versions.tf b/modules/1_prepare/versions.tf
+index 514720edd..e22dfa151 100644
+--- a/modules/1_prepare/versions.tf
++++ b/modules/1_prepare/versions.tf
+@@ -22,7 +22,7 @@ terraform {
+   required_providers {
+     ibm = {
+       source  = "IBM-Cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+     null = {
+       source  = "hashicorp/null"
+diff --git a/modules/4_nodes/versions.tf b/modules/4_nodes/versions.tf
+index 54c93d861..ac71dd5a7 100644
+--- a/modules/4_nodes/versions.tf
++++ b/modules/4_nodes/versions.tf
+@@ -22,7 +22,7 @@ terraform {
+   required_providers {
+     ibm = {
+       source  = "IBM-Cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+     ignition = {
+       source  = "community-terraform-providers/ignition"
+diff --git a/modules/5_install/install.tf b/modules/5_install/install.tf
+index 49b671d61..d1be4778d 100644
+--- a/modules/5_install/install.tf
++++ b/modules/5_install/install.tf
+@@ -52,7 +52,8 @@ locals {
+     isHA                  = var.bastion_vip != ""
+     bastion_master_ip     = var.bastion_ip[0]
+     bastion_backup_ip     = length(var.bastion_ip) > 1 ? slice(var.bastion_ip, 1, length(var.bastion_ip)) : []
+-    forwarders            = var.dns_forwarders
++    forwarder1            = split(";", var.dns_forwarders)[0]
++    forwarder2            = split(";", var.dns_forwarders)[1]
+     gateway_ip            = var.setup_snat ? (var.bastion_vip != "" ? var.bastion_vip : var.bastion_ip[0]) : var.gateway_ip
+     netmask               = cidrnetmask(var.cidr)
+     broadcast             = cidrhost(var.cidr, -1)
+@@ -88,8 +89,8 @@ locals {
+     # This variable is needed to be set if using ibmcloud services.
+     # Otherwise helpernode will fail to run on subsequent runs
+     # trying to start named and haproxy
+-    # TODO: This is hardcoded to 9.9.9.9 to use external nameserver. Need to read from dns_forwarders.
+-    ext_dns = var.use_ibm_cloud_services ? "9.9.9.9" : ""
++    # This is hardcoded to the IBM Cloud DNS.
++    ext_dns = var.use_ibm_cloud_services ? "161.26.0.10" : ""
+     fips    = var.fips_compliant
+   }
+ 
+@@ -224,7 +225,7 @@ resource "null_resource" "config" {
+       "mkdir -p .openshift",
+       "rm -rf ocp4-helpernode",
+       "echo 'Cloning into ocp4-helpernode...'",
+-      "git clone ${var.helpernode_repo} --quiet",
++      "git clone ${var.helpernode_repo} --quiet || sleep 5s && git clone ${var.helpernode_repo} --quiet",
+       "cd ocp4-helpernode && git checkout ${var.helpernode_tag}"
+     ]
+   }
+@@ -382,7 +383,7 @@ resource "null_resource" "install_config" {
+     inline = [
+       "rm -rf ocp4-playbooks",
+       "echo 'Cloning into ocp4-playbooks...'",
+-      "git clone ${var.install_playbook_repo} --quiet",
++      "git clone ${var.install_playbook_repo} --quiet || sleep 5s && git clone ${var.install_playbook_repo} --quiet",
+       "cd ocp4-playbooks && git checkout ${var.install_playbook_tag}"
+     ]
+   }
+@@ -402,9 +403,60 @@ resource "null_resource" "install_config" {
+   }
+ }
+ 
++resource "null_resource" "pause_bootstrap_when_loadbalanced" {
++  count      = var.use_ibm_cloud_services ? 1 : 0
++  depends_on = [null_resource.pre_install, null_resource.install_config]
++
++  connection {
++    type        = "ssh"
++    user        = var.rhel_username
++    host        = var.bastion_public_ip[0]
++    private_key = var.private_key
++    agent       = var.ssh_agent
++    timeout     = "${var.connection_timeout}m"
++  }
++
++  provisioner "remote-exec" {
++    inline = [<<EOF
++random_record=0
++while true
++do
++    sleep 30
++    dig +short "x$${random_record}.apps.${var.cluster_id}.${var.cluster_domain}"
++    if [ $? = 0 ]
++    then
++        break
++    fi
++    random_record=$((random_record + 1))
++    if [ $$random_record -gt 100 ]
++    then
++        echo "Failure to query the right hosts"
++        exit -1
++    fi
++done
++record=0
++while true
++do
++    sleep 30
++    dig +short "api.${var.cluster_id}.${var.cluster_domain}"
++    if [ $? = 0 ]
++    then
++        break
++    fi
++    record=$((record + 1))
++    if [ $$record -gt 100 ]
++    then
++        echo "Failure to query the right hosts"
++        exit -1
++    fi
++done
++EOF
++    ]
++  }
++}
+ 
+ resource "ibm_pi_instance_action" "bootstrap_start" {
+-  depends_on = [null_resource.pre_install, null_resource.install_config]
++  depends_on = [null_resource.pre_install, null_resource.install_config, null_resource.pause_bootstrap_when_loadbalanced]
+   count      = var.bootstrap_count == 0 ? 0 : 1
+ 
+   pi_cloud_instance_id = var.service_instance_id
+diff --git a/modules/5_install/versions.tf b/modules/5_install/versions.tf
+index 48ff072da..034e7b40a 100644
+--- a/modules/5_install/versions.tf
++++ b/modules/5_install/versions.tf
+@@ -26,7 +26,7 @@ terraform {
+     }
+     ibm = {
+       source  = "IBM-Cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+ 
+   }
+diff --git a/modules/7_ibmcloud/versions.tf b/modules/7_ibmcloud/versions.tf
+index 6feb00748..ba6282bce 100644
+--- a/modules/7_ibmcloud/versions.tf
++++ b/modules/7_ibmcloud/versions.tf
+@@ -22,7 +22,7 @@ terraform {
+   required_providers {
+     ibm = {
+       source  = "ibm-cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+   }
+   required_version = ">= 1.2.0"
+diff --git a/modules/8_custom/versions.tf b/modules/8_custom/versions.tf
+index 60c984cb3..07ef4e4b2 100644
+--- a/modules/8_custom/versions.tf
++++ b/modules/8_custom/versions.tf
+@@ -22,7 +22,7 @@ terraform {
+   required_providers {
+     ibm = {
+       source  = "ibm-cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+   }
+   required_version = ">= 1.2.0"
+diff --git a/ocp.tf b/ocp.tf
+index 65fb954ef..d5983560d 100644
+--- a/ocp.tf
++++ b/ocp.tf
+@@ -71,6 +71,7 @@ module "prepare" {
+   proxy                           = var.proxy
+   fips_compliant                  = var.fips_compliant
+   create_cloud_connection         = local.create_cloud_connection
++  force_utc                       = var.force_utc
+ }
+ 
+ data "ibm_pi_workspace" "workspace" {
+@@ -78,10 +79,10 @@ data "ibm_pi_workspace" "workspace" {
+ }
+ 
+ locals {
+-  # PER doc reference: https://cloud.ibm.com/docs/power-iaas?topic=power-iaas-per
+-  is_per                  = contains(["dal10", "dal12", "fra04", "fra05", "wdc06", "wdc07", "mad02", "mad04", "sao01", "sao04"], var.ibmcloud_zone)
++  # PER doc reference: https://cloud.ibm.com/docs/power-iaas?topic=power-iaas-per#dcs-per
++  is_per                  = contains(["dal10", "dal12", "dal13", "dal14", "fra04", "fra05", "lon04", "lon06", "mad02", "mad04", "osa21", "sao01", "sao04", "syd04", "syd05", "tok04", "tor01", "wdc04", "wdc06", "wdc07", "us-east"], var.ibmcloud_zone)
+   create_cloud_connection = var.use_ibm_cloud_services && var.ibm_cloud_connection_name == "" && !local.is_per
+-  tgw_network             = module.prepare.cloud_connection_name == "" ? data.ibm_pi_workspace.workspace.pi_workspace_details.crn : module.prepare.cloud_connection_name
++  tgw_network             = module.prepare.cloud_connection_name == "" ? data.ibm_pi_workspace.workspace.pi_workspace_details[0].crn : module.prepare.cloud_connection_name
+ }
+ 
+ module "nodes" {
+diff --git a/variables.tf b/variables.tf
+index d6c055d2a..ceefa4e57 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -726,12 +726,10 @@ variable "luks_name" {
+   default     = "root"
+ }
+ 
+-
+ ################################################################
+ # KDUMP variables
+ ################################################################
+ 
+-
+ variable "kdump_enable" {
+   type        = bool
+   description = "Set to true to enable the kdump on Cluster Nodes"
+@@ -787,3 +785,13 @@ variable "os_image_stream" {
+     error_message = "The os_image_stream value must be blank, 'rhel-9', or 'rhel-10'."
+   }
+ }
++
++################################################################
++# Overrides the default timezone in an image to use UTC
++################################################################
++
++variable "force_utc" {
++  type        = bool
++  description = "Forces the bastion to use UTC"
++  default     = false
++}
+diff --git a/versions.tf b/versions.tf
+index 6b54f030f..6094ffdfc 100644
+--- a/versions.tf
++++ b/versions.tf
+@@ -22,7 +22,7 @@ terraform {
+   required_providers {
+     ibm = {
+       source  = "ibm-cloud/ibm"
+-      version = "1.60.0"
++      version = "2.2.2"
+     }
+     random = {
+       source  = "hashicorp/random"

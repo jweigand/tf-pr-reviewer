@@ -1,0 +1,56 @@
+# Replay ingest: a recorded Search API page -> filter -> pr.candidates.
+#
+# The default path, so a reviewer needs no GitHub token. The page is a raw, unmodified
+# API response, so replay enters upstream of the filter and exercises it for real
+# rather than feeding it pre-cleaned data.
+#
+# Everything below the input is byte-identical to ingest-live.yaml, dedupe included.
+# That is the point: the only difference between replay and live is where the JSON
+# comes from, so replay rehearses the whole live path rather than a subset of it.
+#
+# It polls rather than running once. A one-shot container that exits 0 is
+# indistinguishable from a crash at a glance, and polling also means replay rehearses
+# live's timing, not just its logic. Re-reading the same page publishes nothing after
+# the first pass, because the dedupe below suppresses it.
+
+input:
+  generate:
+    interval: ${POLL_INTERVAL:-60s}
+    # file() reads one path, so there is no page-*.json glob here. Point REPLAY_PAGE
+    # at a different recording to replay it.
+    mapping: 'root = file(env("REPLAY_PAGE").or("/fixtures/search/page-01.json")).parse_json()'
+
+pipeline:
+  processors:
+    # A search response is {total_count, incomplete_results, items: [...]}.
+    - mapping: 'root = this.items'
+    - unarchive:
+        format: json_array
+
+    - mapping: |
+        import "/connect/resources/filter.blobl"
+        root = this.apply("filter_and_project")
+
+    # Identical to live. Against a fixed recording this suppresses every pass after the
+    # first, which is what keeps a polling replay deterministic: 16 records, once.
+    - dedupe:
+        cache: seen_prs
+        key: '${! json("search_id") }-${! json("pr_updated_at") }'
+
+cache_resources:
+  # In-process, so a restart republishes. Tolerable because the service dedupes on the
+  # head SHA before spending a model call (service/reviewer/seen.py).
+  - label: seen_prs
+    memory:
+      default_ttl: 24h
+
+output:
+  kafka_franz:
+    seed_brokers: [ redpanda:9092 ]
+    topic: pr.candidates
+    # Keyed on the PR so a later compaction or a partitioned consumer keeps all
+    # revisions of one pull request together and in order.
+    key: '${! json("repo") }#${! json("pr_number") }'
+
+logger:
+  level: INFO

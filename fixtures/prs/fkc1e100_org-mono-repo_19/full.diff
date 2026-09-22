@@ -1,0 +1,129 @@
+diff --git a/.github/workflows/terraform-validate.yml b/.github/workflows/terraform-validate.yml
+new file mode 100644
+index 0000000..e4efe93
+--- /dev/null
++++ b/.github/workflows/terraform-validate.yml
+@@ -0,0 +1,63 @@
++name: terraform-validate
++
++# The provider constraint conflict that blocked `terraform init` across the
++# repository was a static configuration error. It needed no cloud credentials
++# and no state to detect, only an `init` and a `validate`. This workflow runs
++# both on every change so the same class of fault fails in review instead of
++# in someone's terminal.
++
++on:
++  pull_request:
++    paths:
++      - "**/*.tf"
++      - ".github/workflows/terraform-validate.yml"
++  push:
++    branches: [main]
++    paths:
++      - "**/*.tf"
++      - ".github/workflows/terraform-validate.yml"
++
++permissions:
++  contents: read
++
++jobs:
++  validate:
++    name: fmt, init and validate every root
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: hashicorp/setup-terraform@v3
++        with:
++          terraform_version: 1.7.5
++          terraform_wrapper: false
++
++      - name: terraform fmt
++        run: terraform fmt -check -recursive -diff .
++
++      - name: terraform init and validate
++        run: |
++          set -uo pipefail
++          failed=0
++
++          # Child modules under terraform/modules are validated transitively
++          # through the roots that call them, and have no provider block of
++          # their own, so they are not entry points.
++          roots=$(find . -name '*.tf' -not -path './.git/*' \
++                    -not -path './terraform/modules/*' \
++                    -exec dirname {} \; | sort -u)
++
++          for d in $roots; do
++            echo "::group::$d"
++            if terraform -chdir="$d" init -backend=false -input=false -no-color \
++               && terraform -chdir="$d" validate -no-color; then
++              echo "ok: $d"
++            else
++              echo "::error file=$d::terraform validate failed in $d"
++              failed=$((failed + 1))
++            fi
++            echo "::endgroup::"
++          done
++
++          echo "roots checked: $(echo "$roots" | wc -l), failed: $failed"
++          exit $((failed > 0))
+diff --git a/clusters/prod-checkout-gateway-11/terraform/outputs.tf b/clusters/prod-checkout-gateway-11/terraform/outputs.tf
+index 2985dc8..e5bc9fd 100644
+--- a/clusters/prod-checkout-gateway-11/terraform/outputs.tf
++++ b/clusters/prod-checkout-gateway-11/terraform/outputs.tf
+@@ -1,11 +1,11 @@
+ output "cluster_name" {
+-  value = google_container_cluster.primary.name
++  value = module.gke_cluster.cluster_name
+ }
+ 
+ output "cluster_endpoint" {
+-  value = google_container_cluster.primary.endpoint
++  value = module.gke_cluster.cluster_endpoint
+ }
+ 
+ output "get_credentials_command" {
+-  value = "gcloud container clusters get-credentials ${google_container_cluster.primary.name} --zone ${google_container_cluster.primary.location} --project ${var.project_id}"
++  value = module.gke_cluster.get_credentials_command
+ }
+diff --git a/terraform/modules/gce-instance/main.tf b/terraform/modules/gce-instance/main.tf
+index bd147ab..a71d288 100644
+--- a/terraform/modules/gce-instance/main.tf
++++ b/terraform/modules/gce-instance/main.tf
+@@ -3,7 +3,7 @@ terraform {
+   required_providers {
+     google = {
+       source  = "hashicorp/google"
+-      version = "~> 5.0"
++      version = ">= 5.0"
+     }
+   }
+ }
+diff --git a/terraform/modules/gke-cluster/main.tf b/terraform/modules/gke-cluster/main.tf
+index 235d8d1..1a696ed 100644
+--- a/terraform/modules/gke-cluster/main.tf
++++ b/terraform/modules/gke-cluster/main.tf
+@@ -3,7 +3,7 @@ terraform {
+   required_providers {
+     google = {
+       source  = "hashicorp/google"
+-      version = "~> 7.43"
++      version = ">= 5.0"
+     }
+   }
+ }
+@@ -31,10 +31,10 @@ resource "google_container_cluster" "primary" {
+ }
+ 
+ resource "google_container_node_pool" "primary_nodes" {
+-  name       = "${var.cluster_name}-default-pool"
+-  location   = var.zone
+-  cluster    = google_container_cluster.primary.name
+-  project    = var.project_id
++  name     = "${var.cluster_name}-default-pool"
++  location = var.zone
++  cluster  = google_container_cluster.primary.name
++  project  = var.project_id
+ 
+   dynamic "autoscaling" {
+     for_each = var.enable_autoscaling ? [1] : []

@@ -1,0 +1,20 @@
+diff --git a/.github/workflows/release-please.yml b/.github/workflows/release-please.yml
+new file mode 100644
+index 0000000000..fe282cf643
+--- /dev/null
++++ b/.github/workflows/release-please.yml
+@@ -0,0 +1,14 @@
++name: release-please
++on:
++  push:
++    branches:
++      - main
++
++jobs:
++  release-please:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: google-github-actions/release-please-action@v3
++        with:
++          release-type: terraform-module
++          default-branch: master

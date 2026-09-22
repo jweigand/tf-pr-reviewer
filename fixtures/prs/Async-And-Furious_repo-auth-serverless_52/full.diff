@@ -1,0 +1,1336 @@
+diff --git a/.github/workflows/auth-smoke.yml b/.github/workflows/auth-smoke.yml
+new file mode 100644
+index 0000000..b216cb6
+--- /dev/null
++++ b/.github/workflows/auth-smoke.yml
+@@ -0,0 +1,230 @@
++name: Auth deploy and smoke test
++
++on:
++  workflow_dispatch:
++    inputs:
++      environment:
++        description: Environment to deploy and test
++        required: true
++        type: choice
++        options: [hml, prod]
++      confirm:
++        description: Required only for production
++        required: false
++        default: ""
++        type: string
++
++permissions:
++  contents: read
++
++jobs:
++  deploy:
++    uses: ./.github/workflows/ci.yml
++    with:
++      environment: ${{ inputs.environment }}
++      operation: apply
++      deploy_auth_only: false
++      confirm: ${{ inputs.confirm }}
++    secrets: inherit
++
++  request:
++    needs: deploy
++    runs-on: ubuntu-latest
++    environment: ${{ inputs.environment == 'prod' && 'production' || 'hml' }}
++    permissions:
++      contents: read
++    env:
++      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
++      SEEDED_CPF: ${{ secrets.SEEDED_CPF }}
++    steps:
++      - uses: actions/checkout@v4
++      - name: Configure AWS credentials
++        uses: aws-actions/configure-aws-credentials@v4
++        with:
++          aws-region: ${{ env.AWS_REGION }}
++          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
++          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
++          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
++      - name: Discover deployed auth endpoint
++        shell: bash
++        env:
++          ENVIRONMENT: ${{ inputs.environment }}
++        run: |
++          set -euo pipefail
++          api_endpoint="$(aws apigatewayv2 get-apis \
++            --query "Items[?Name=='tc3-auth-${ENVIRONMENT}'].ApiEndpoint | [0]" \
++            --output text)"
++          test -n "$api_endpoint" && test "$api_endpoint" != "None"
++          printf 'API_ENDPOINT=%s\nAUTH_FUNCTION_NAME=tc3-auth-%s-auth\n' \
++            "$api_endpoint" "$ENVIRONMENT" >> "$GITHUB_ENV"
++      - name: Inspect bounded Lambda and database connectivity configuration
++        shell: bash
++        env:
++          ENVIRONMENT: ${{ inputs.environment }}
++        run: |
++          set -euo pipefail
++          config_file="$RUNNER_TEMP/lambda-config.json"
++          aws lambda get-function-configuration --function-name "$AUTH_FUNCTION_NAME" --output json > "$config_file"
++          python - "$config_file" <<'PY'
++          import json
++          import sys
++          config = json.load(open(sys.argv[1], encoding="utf-8"))
++          vpc = config.get("VpcConfig", {})
++          print(json.dumps({
++              "lambda_state": config.get("State"),
++              "last_update_status": config.get("LastUpdateStatus"),
++              "timeout_seconds": config.get("Timeout"),
++              "subnet_count": len(vpc.get("SubnetIds", [])),
++              "security_group_count": len(vpc.get("SecurityGroupIds", [])),
++              "database_secret_configured": bool(config.get("Environment", {}).get("Variables", {}).get("DATABASE_SECRET_ARN")),
++          }))
++          PY
++          secret_arn="$(python - "$config_file" <<'PY'
++          import json
++          import sys
++          print(json.load(open(sys.argv[1], encoding="utf-8")).get("Environment", {}).get("Variables", {}).get("DATABASE_SECRET_ARN", ""))
++          PY
++          )"
++          if [ -n "$secret_arn" ]; then
++            aws secretsmanager get-secret-value --secret-id "$secret_arn" --query SecretString --output text > "$RUNNER_TEMP/database-secret.json"
++            python - "$RUNNER_TEMP/database-secret.json" <<'PY'
++          import json
++          import sys
++          value = json.load(open(sys.argv[1], encoding="utf-8"))
++          print(json.dumps({"database_secret_keys": sorted(value) if isinstance(value, dict) else []}))
++          PY
++          fi
++          aws rds describe-db-instances --db-instance-identifier "tc3-db-${ENVIRONMENT}" \
++            --query 'DBInstances[0].{status:DBInstanceStatus,port:Endpoint.Port,public:PubliclyAccessible,sg_count:length(VpcSecurityGroups)}' \
++            --output json
++      - name: Require approved seeded CPF secret
++        shell: bash
++        run: |
++          set -euo pipefail
++          if [ -z "${SEEDED_CPF:-}" ]; then
++            echo '::error title=Missing smoke credential::Configure the SEEDED_CPF secret in both the hml and production GitHub Environments; do not commit or print the CPF.'
++            exit 1
++          fi
++      - name: Call seeded CPF and verify JWT without printing it
++        shell: bash
++        run: |
++          set -euo pipefail
++          response_file="$RUNNER_TEMP/auth-response.json"
++          set +e
++          http_status="$(curl --silent --show-error --max-time 20 \
++            -H 'content-type: application/json' \
++            -H "x-correlation-id: github-${GITHUB_RUN_ID}" \
++            -d "$(python -c 'import json,os; print(json.dumps({"cpf": os.environ["SEEDED_CPF"]}))')" \
++            --output "$response_file" --write-out '%{http_code}' "$API_ENDPOINT/auth")"
++          curl_exit=$?
++          set -e
++          token_present="$(python - "$response_file" <<'PY'
++          import json
++          import sys
++          try:
++              value = json.load(open(sys.argv[1], encoding="utf-8")).get("token", "")
++              valid = isinstance(value, str) and len(value.split(".")) == 3 and all(value.split("."))
++          except Exception:
++              valid = False
++          print(str(valid).lower())
++          PY
++          )"
++          echo "HTTP_STATUS=$http_status TOKEN_PRESENT=$token_present CURL_EXIT=$curl_exit"
++          if ! { test "$curl_exit" -eq 0 && test "$http_status" = "200" && test "$token_present" = "true"; }; then
++            exit 1
++          fi
++          echo 'Seeded CPF authentication returned a structurally valid JWT.'
++      - name: Direct Lambda bounded diagnostic
++        if: always()
++        shell: bash
++        run: |
++          set -euo pipefail
++          test -n "$AUTH_FUNCTION_NAME" || exit 0
++          payload_file="$RUNNER_TEMP/auth-diagnostic-payload.json"
++          response_file="$RUNNER_TEMP/auth-diagnostic-response.json"
++          python - "$payload_file" <<'PY'
++          import json
++          import os
++          import sys
++          json.dump({
++              "version": "2.0",
++              "routeKey": "POST /auth",
++              "rawPath": "/auth",
++              "headers": {"content-type": "application/json", "x-correlation-id": "github-diagnostic"},
++              "requestContext": {"requestId": "github-diagnostic"},
++              "body": json.dumps({"cpf": os.environ["SEEDED_CPF"]}),
++          }, open(sys.argv[1], "w", encoding="utf-8"))
++          PY
++          aws lambda invoke --function-name "$AUTH_FUNCTION_NAME" \
++            --cli-binary-format raw-in-base64-out --payload "fileb://$payload_file" \
++            "$response_file" >/dev/null
++          python - "$response_file" <<'PY'
++          import json
++          import sys
++          try:
++              result = json.load(open(sys.argv[1], encoding="utf-8"))
++              body = json.loads(result.get("body", "{}")) if isinstance(result.get("body"), str) else result.get("body", {})
++              token = body.get("token", "") if isinstance(body, dict) else ""
++              token_present = isinstance(token, str) and len(token.split(".")) == 3 and all(token.split("."))
++              print(f"DIRECT_STATUS={result.get('statusCode', 'unknown')} DIRECT_TOKEN_PRESENT={str(token_present).lower()}")
++          except Exception:
++              print("DIRECT_STATUS=unparseable DIRECT_TOKEN_PRESENT=false")
++          PY
++      - name: Collect bounded sanitized CloudWatch diagnostics
++        if: always()
++        shell: bash
++        run: |
++          set -euo pipefail
++          test -n "$AUTH_FUNCTION_NAME" || exit 0
++          start_ms="$(( $(date +%s) * 1000 - 900000 ))"
++          for attempt in 1 2 3 4 5 6; do
++            aws logs filter-log-events --log-group-name "/aws/lambda/$AUTH_FUNCTION_NAME" \
++              --start-time "$start_ms" --limit 50 --output json > "$RUNNER_TEMP/auth-logs.json" || true
++            python - "$RUNNER_TEMP/auth-logs.json" <<'PY' > "$RUNNER_TEMP/auth-errors.json"
++          import json
++          import re
++          import sys
++
++          def safe(value):
++              text = str(value or "")
++              text = re.sub(r"\b\d{3}[.\s-]?\d{3}[.\s-]?\d{3}[.\s-]?\d{2}\b", "[REDACTED_CPF]", text)
++              text = re.sub(r"\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "[REDACTED_JWT]", text)
++              text = re.sub(r"(?i)\b(password|secret|token|authorization|api[_-]?key)\s*[:=]\s*[^\s,;}]+", r"\1=[REDACTED]", text)
++              return text[:1000]
++
++          try:
++              rows = json.load(open(sys.argv[1], encoding="utf-8")).get("events", [])
++          except Exception:
++              rows = []
++          for row in rows:
++              message = row.get("message", "")
++              try:
++                  record = json.loads(message)
++              except Exception:
++                  record = {}
++              if record.get("level") == "error" or str(record.get("event", "")).endswith("_failed"):
++                  print(json.dumps({
++                      "timestamp": row.get("timestamp"),
++                      "log_stream": row.get("logStreamName"),
++                      "level": record.get("level"),
++                      "event": record.get("event"),
++                      "correlation_id": safe(record.get("correlation_id")),
++                      "error_name": safe(record.get("error_name")),
++                      "error_message": safe(record.get("error_message")),
++                      "duration_ms": record.get("duration_ms"),
++                  }))
++              elif not record and any(word in message.lower() for word in ("error", "exception", "timeout", "accessdenied")):
++                  print(json.dumps({
++                      "timestamp": row.get("timestamp"),
++                      "log_stream": row.get("logStreamName"),
++                      "level": "error",
++                      "event": "runtime_error",
++                      "error_message": safe(message),
++                  }))
++          PY
++            if test -s "$RUNNER_TEMP/auth-errors.json"; then
++              cat "$RUNNER_TEMP/auth-errors.json"
++              break
++            fi
++            test "$attempt" -eq 6 || sleep 5
++          done
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 08304b8..58815c2 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -16,21 +16,10 @@ on:
+         required: true
+         type: boolean
+       confirm:
+-        description: Type "APPLY PROD" for production apply or "DESTROY HML" for HML destroy
++        description: Type "APPLY PROD" for production apply, "DESTROY HML" for HML destroy, or "DESTROY PROD" for production destroy
+         required: false
+         default: ""
+         type: string
+-    secrets:
+-      AWS_ACCESS_KEY_ID:
+-        required: true
+-      AWS_SECRET_ACCESS_KEY:
+-        required: true
+-      AWS_SESSION_TOKEN:
+-        required: false
+-      JWT_PRIVATE_KEY_SECRET_ARN:
+-        required: false
+-      DATABASE_SECRET_ARN:
+-        required: false
+   pull_request:
+   push:
+     branches: [main, develop]
+@@ -52,7 +41,7 @@ on:
+         type: boolean
+         default: false
+       confirm:
+-        description: Type "APPLY PROD" for production apply or "DESTROY HML" for HML destroy
++        description: Type "APPLY PROD" for production apply, "DESTROY HML" for HML destroy, or "DESTROY PROD" for production destroy
+         required: false
+         default: ""
+         type: string
+@@ -113,19 +102,19 @@ jobs:
+       TFVARS_JWT_ISSUER: ${{ vars.JWT_ISSUER || 'repo-auth-serverless' }}
+       TFVARS_JWT_AUDIENCE: ${{ vars.JWT_AUDIENCE || 'async-furious-project' }}
+       TFVARS_JWT_EXPIRES_IN: ${{ vars.JWT_EXPIRES_IN || '1800' }}
+-      TFVARS_DATABASE_SECRET_ARN: ${{ secrets.DATABASE_SECRET_ARN }}
++      TFVARS_DATABASE_SECRET_ARN: ""
++      TFVARS_DATABASE_HOST: ""
++      TFVARS_DATABASE_PORT: ""
++      TFVARS_DATABASE_NAME: ""
+       TFVARS_ACADEMY_MODE: "false"
+       TFVARS_LAB_ROLE_ARN: ${{ vars.LAB_ROLE_ARN }}
+       TFVARS_AUTH_LAMBDA_ROLE_ARN: ${{ vars.AUTH_LAMBDA_ROLE_ARN }}
+       TFVARS_AUTHORIZER_LAMBDA_ROLE_ARN: ${{ vars.AUTHORIZER_LAMBDA_ROLE_ARN }}
+-      TFVARS_DATABASE_SUBNET_IDS: ${{ vars.DATABASE_SUBNET_IDS }}
+-      TFVARS_DATABASE_SECURITY_GROUP_IDS: ${{ vars.DATABASE_SECURITY_GROUP_IDS }}
+-      TFVARS_BACKEND_INTEGRATION_URI: ${{ vars.BACKEND_INTEGRATION_URI }}
+-      # A configured backend is the full-deployment signal. Auth-only remains
+-      # available only as an intentional dispatch with no backend URI.
+-      TFVARS_DEPLOY_AUTH_ONLY: ${{ inputs.deploy_auth_only == true && vars.BACKEND_INTEGRATION_URI == '' }}
+-      TFVARS_VPC_LINK_SUBNET_IDS: ${{ vars.VPC_LINK_SUBNET_IDS }}
+-      TFVARS_VPC_LINK_SECURITY_GROUP_IDS: ${{ vars.VPC_LINK_SECURITY_GROUP_IDS }}
++      TFVARS_BACKEND_INTEGRATION_URI: ""
++      # The backend listener is populated from matching Kubernetes state below;
++      # deployment runs therefore always use the full integration path.
++      TFVARS_DEPLOY_AUTH_ONLY: "false"
++      TFVARS_DESTROY_MODE: ${{ startsWith(inputs.operation, 'destroy') }}
+       TF_INPUT: "false"
+     steps:
+       - name: Guard production apply
+@@ -134,18 +123,25 @@ jobs:
+           [ "$CONFIRM" = "APPLY PROD" ] || { echo 'Production apply requires confirm="APPLY PROD".' >&2; exit 1; }
+         env:
+           CONFIRM: ${{ inputs.confirm }}
+-      - name: Guard HML destroy
++      - name: Guard destructive operation
+         if: startsWith(env.DEPLOY_OPERATION, 'destroy')
+         run: |
+-          [ "$ENVIRONMENT" = "hml" ] || { echo 'Destroy operations are restricted to HML.' >&2; exit 1; }
+-          if [ "$OPERATION" = "destroy" ]; then
+-            [ "$CONFIRM" = "DESTROY HML" ] || { echo 'Destroy requires confirm="DESTROY HML".' >&2; exit 1; }
++          if [ "$ENVIRONMENT" = "prod" ]; then
++            [ "$EVENT_NAME" = "workflow_dispatch" ] || { echo 'Production destroy is allowed only through workflow_dispatch.' >&2; exit 1; }
++            [ "$CONFIRM" = "DESTROY PROD" ] || { echo 'Production destroy requires confirm="DESTROY PROD".' >&2; exit 1; }
++          else
++            [ "$ENVIRONMENT" = "hml" ] || { echo 'Destroy operations are restricted to HML or explicitly dispatched production.' >&2; exit 1; }
++            if [ "$OPERATION" = "destroy" ]; then
++              [ "$CONFIRM" = "DESTROY HML" ] || { echo 'Destroy requires confirm="DESTROY HML".' >&2; exit 1; }
++            fi
+           fi
+         env:
+           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
++          ACADEMY_MODE: ${{ env.DEPLOY_ACADEMY_MODE }}
+           CONFIRM: ${{ inputs.confirm }}
+           ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
+           OPERATION: ${{ env.DEPLOY_OPERATION }}
++          EVENT_NAME: ${{ github.event_name }}
+       - uses: actions/checkout@v4
+       - uses: actions/setup-node@v4
+         if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') }}
+@@ -166,6 +162,72 @@ jobs:
+       - uses: hashicorp/setup-terraform@v3
+         with:
+           terraform_version: "~> 1.13"
++      - name: Read backend listener from Kubernetes Terraform state
++        if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') }}
++        shell: bash
++        run: |
++          set -euo pipefail
++          account_id="$(aws sts get-caller-identity --query Account --output text)"
++          state_file="$RUNNER_TEMP/repo-k8s-infra-${DEPLOY_ENVIRONMENT}.tfstate"
++          aws s3 cp \
++            "s3://tc3-tfstate-${account_id}/repo-k8s-infra/${DEPLOY_ENVIRONMENT}/terraform.tfstate" \
++            "$state_file" --only-show-errors
++          python - "$state_file" <<'PY'
++          import json
++          import os
++          import re
++          import sys
++
++          with open(sys.argv[1], encoding="utf-8") as file:
++              state = json.load(file)
++          value = state.get("outputs", {}).get("internal_alb_listener_arn", {}).get("value")
++          pattern = re.compile(
++              r"^arn:aws(?:-[a-z0-9-]+)?:elasticloadbalancing:[^:]+:\d{12}:"
++              r"listener/(?:app|net|gateway)/[^/]+/[0-9a-fA-F]+/[0-9a-fA-F]+$"
++          )
++          if not isinstance(value, str) or not pattern.fullmatch(value.strip()):
++              raise SystemExit(
++                  "repo-k8s-infra remote state has no valid internal_alb_listener_arn output"
++              )
++          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
++              env_file.write(f"TFVARS_BACKEND_INTEGRATION_URI={value.strip()}\n")
++          PY
++      - name: Read database secret ARN from managed database state
++        if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') }}
++        shell: bash
++        run: |
++          set -euo pipefail
++          account_id="$(aws sts get-caller-identity --query Account --output text)"
++          state_file="$RUNNER_TEMP/repo-db-infra-${DEPLOY_ENVIRONMENT}.tfstate"
++          aws s3 cp \
++            "s3://tc3-tfstate-${account_id}/repo-db-infra/${DEPLOY_ENVIRONMENT}/terraform.tfstate" \
++            "$state_file" --only-show-errors
++          python - "$state_file" <<'PY'
++          import json
++          import os
++          import re
++          import sys
++
++          state = json.load(open(sys.argv[1], encoding="utf-8"))
++          outputs = state.get("outputs", {})
++          value = (
++              outputs.get("db_connection_secret_arn", {}).get("value")
++              or outputs.get("db_secret_arn", {}).get("value")
++          )
++          host = outputs.get("db_host", {}).get("value")
++          port = outputs.get("db_port", {}).get("value")
++          name = outputs.get("db_name", {}).get("value")
++          pattern = re.compile(r"^arn:aws(?:-[a-z0-9-]+)?:secretsmanager:[^:]+:\d{12}:secret:.+$")
++          if not isinstance(value, str) or not pattern.fullmatch(value.strip()):
++              raise SystemExit("repo-db-infra remote state has no valid database secret ARN output")
++          if not isinstance(host, str) or not host.strip() or not isinstance(port, (int, float)) or not isinstance(name, str) or not name.strip():
++              raise SystemExit("repo-db-infra remote state has incomplete database connection outputs")
++          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
++              env_file.write(f"TFVARS_DATABASE_SECRET_ARN={value.strip()}\n")
++              env_file.write(f"TFVARS_DATABASE_HOST={host.strip()}\n")
++              env_file.write(f"TFVARS_DATABASE_PORT={int(port)}\n")
++              env_file.write(f"TFVARS_DATABASE_NAME={name.strip()}\n")
++          PY
+       - name: Write Terraform variables
+         if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') }}
+         working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}
+@@ -183,16 +245,6 @@ jobs:
+           def number(name):
+               return int(value(name))
+ 
+-          def string_list(name):
+-              raw = value(name).strip()
+-              if not raw:
+-                  return []
+-              try:
+-                  parsed = json.loads(raw)
+-                  return parsed if isinstance(parsed, list) else [str(parsed)]
+-              except json.JSONDecodeError:
+-                  return [item.strip() for item in raw.split(",") if item.strip()]
+-
+           variables = {
+               "aws_region": value("TFVARS_AWS_REGION"),
+               "lambda_package_path": value("TFVARS_LAMBDA_PACKAGE_PATH"),
+@@ -203,16 +255,16 @@ jobs:
+               "jwt_audience": value("TFVARS_JWT_AUDIENCE"),
+               "jwt_expires_in": number("TFVARS_JWT_EXPIRES_IN"),
+               "database_secret_arn": value("TFVARS_DATABASE_SECRET_ARN"),
++              "database_host": value("TFVARS_DATABASE_HOST"),
++              "database_port": number("TFVARS_DATABASE_PORT"),
++              "database_name": value("TFVARS_DATABASE_NAME"),
+               "academy_mode": boolean("TFVARS_ACADEMY_MODE"),
+               "lab_role_arn": value("TFVARS_LAB_ROLE_ARN"),
+               "auth_lambda_role_arn": value("TFVARS_AUTH_LAMBDA_ROLE_ARN"),
+               "authorizer_lambda_role_arn": value("TFVARS_AUTHORIZER_LAMBDA_ROLE_ARN"),
+-              "database_subnet_ids": string_list("TFVARS_DATABASE_SUBNET_IDS"),
+-              "database_security_group_ids": string_list("TFVARS_DATABASE_SECURITY_GROUP_IDS"),
+               "backend_integration_uri": value("TFVARS_BACKEND_INTEGRATION_URI"),
+               "deploy_auth_only": boolean("TFVARS_DEPLOY_AUTH_ONLY"),
+-              "vpc_link_subnet_ids": string_list("TFVARS_VPC_LINK_SUBNET_IDS"),
+-              "vpc_link_security_group_ids": string_list("TFVARS_VPC_LINK_SECURITY_GROUP_IDS"),
++              "destroy_mode": boolean("TFVARS_DESTROY_MODE"),
+           }
+           missing = [name for name in ("jwt_private_key_secret_arn", "jwt_public_key_parameter_name",
+                                        "jwt_public_key_parameter_arn", "database_secret_arn")
+@@ -222,6 +274,19 @@ jobs:
+           with open("terraform.auto.tfvars.json", "w", encoding="utf-8") as file:
+               json.dump(variables, file)
+           PY
++      - name: Validate production backend source
++        if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') && env.DEPLOY_ENVIRONMENT == 'prod' }}
++        run: |
++          if [ -z "${TFVARS_BACKEND_INTEGRATION_URI//[[:space:]]/}" ]; then
++            echo 'Production requires the production environment BACKEND_INTEGRATION_URI (the repo-k8s-infra prod internal_alb_listener_arn output).' >&2
++            exit 1
++          fi
++          case "$TFVARS_BACKEND_INTEGRATION_URI" in
++            *tc3-hml-internal*)
++              echo 'Refusing production deployment with the HML backend listener tc3-hml-internal; configure production BACKEND_INTEGRATION_URI from the prod Kubernetes state.' >&2
++              exit 1
++              ;;
++          esac
+       - name: Bootstrap Terraform state backend
+         if: ${{ !startsWith(env.DEPLOY_OPERATION, 'destroy') }}
+         shell: bash
+@@ -230,11 +295,14 @@ jobs:
+         id: destroy_state
+         if: startsWith(env.DEPLOY_OPERATION, 'destroy')
+         shell: bash
+-        run: bash .github/scripts/prepare-destroy-backend.sh repo-auth-serverless hml infra/hml/backend.hcl
++        run: bash .github/scripts/prepare-destroy-backend.sh repo-auth-serverless "${{ env.DEPLOY_ENVIRONMENT }}" "infra/${{ env.DEPLOY_ENVIRONMENT }}/backend.hcl"
+       - name: Write destroy-only Terraform placeholders
+         if: startsWith(env.DEPLOY_OPERATION, 'destroy') && steps.destroy_state.outputs.has_state == 'true'
+-        working-directory: infra/hml
++        working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}
+         run: |
++          # Destroy reads existing state only. These values are deliberately
++          # placeholders: the external JWT/database secrets and S3 backend are
++          # not Terraform resources in this stack and are never deleted here.
+           cat > terraform.auto.tfvars.json <<'JSON'
+           {
+             "aws_region": "${{ env.AWS_REGION }}",
+@@ -242,6 +310,7 @@ jobs:
+             "lab_role_arn": "arn:aws:iam::000000000000:role/destroy-placeholder",
+             "auth_lambda_vpc_enabled": false,
+             "deploy_auth_only": true,
++            "destroy_mode": true,
+             "jwt_private_key_secret_arn": "destroy-placeholder",
+             "jwt_public_key_parameter_name": "/destroy/placeholder",
+             "jwt_public_key_parameter_arn": "destroy-placeholder",
+@@ -275,15 +344,15 @@ jobs:
+           if-no-files-found: error
+       - name: Terraform destroy plan
+         if: env.DEPLOY_OPERATION == 'destroy-plan' && steps.destroy_state.outputs.has_state == 'true'
+-        working-directory: infra/hml
++        working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}
+         run: terraform plan -destroy -input=false
+       - name: Save exact Terraform destroy plan
+         if: env.DEPLOY_OPERATION == 'destroy' && steps.destroy_state.outputs.has_state == 'true'
+-        working-directory: infra/hml
++        working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}
+         run: terraform plan -destroy -input=false -out=destroy.tfplan
+       - name: Apply exact Terraform destroy plan
+         if: env.DEPLOY_OPERATION == 'destroy' && steps.destroy_state.outputs.has_state == 'true'
+-        working-directory: infra/hml
++        working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}
+         run: terraform apply -input=false destroy.tfplan
+       - name: Remove generated Terraform inputs
+         if: always()
+diff --git a/.github/workflows/down.yml b/.github/workflows/down.yml
+index ccdec06..4f736a6 100644
+--- a/.github/workflows/down.yml
++++ b/.github/workflows/down.yml
+@@ -1,10 +1,16 @@
+-name: Down HML
++name: Down authentication
+ 
+ on:
+   workflow_dispatch:
+     inputs:
++      environment:
++        description: Terraform environment to destroy
++        required: true
++        type: choice
++        options: [hml, prod]
++        default: hml
+       confirm:
+-        description: Type DESTROY HML to confirm deletion
++        description: Type DESTROY HML or DESTROY PROD to confirm deletion
+         required: true
+         type: string
+ 
+@@ -12,13 +18,11 @@ permissions:
+   contents: read
+ 
+ jobs:
+-  destroy-hml:
+-    name: Destroy HML authentication
++  destroy-auth:
++    name: Destroy ${{ inputs.environment }} authentication
+     uses: ./.github/workflows/ci.yml
+-    permissions:
+-      contents: read
+     with:
+-      environment: hml
++      environment: ${{ inputs.environment }}
+       operation: destroy
+       deploy_auth_only: false
+       confirm: ${{ inputs.confirm }}
+diff --git a/.github/workflows/up.yml b/.github/workflows/up.yml
+index 3b2d556..4accd1f 100644
+--- a/.github/workflows/up.yml
++++ b/.github/workflows/up.yml
+@@ -10,8 +10,6 @@ jobs:
+   deploy-hml:
+     name: Deploy HML authentication
+     uses: ./.github/workflows/ci.yml
+-    permissions:
+-      contents: read
+     with:
+       environment: hml
+       operation: apply
+diff --git a/README.md b/README.md
+index 0b77ad7..17842a5 100644
+--- a/README.md
++++ b/README.md
+@@ -53,19 +53,25 @@ environments: pushes to `develop` deploy HML automatically, while production
+ uses the protected `production` Environment approval. Manual runs select
+ `hml` or `prod` and an operation; there is no Academy-mode toggle.
+ 
+-The manual dispatch also exposes `deploy_auth_only`, which defaults to `false`.
+-The workflow exports `TF_VAR_deploy_auth_only` as `true` only when this input is
+-explicitly enabled and `BACKEND_INTEGRATION_URI` is empty. A configured backend
+-URI always selects the full deployment path, even if the input is accidentally
+-set to `true`.
++The manual dispatch exposes `deploy_auth_only`, which defaults to `false`; HML
++and production deployment runs derive a valid backend listener from matching
++Kubernetes state and always select the full deployment path.
+ 
+ Required non-secret Actions variables are `AWS_REGION`, `JWT_PUBLIC_KEY_PARAMETER_NAME`,
+-`JWT_PUBLIC_KEY_PARAMETER_ARN`, `DATABASE_SUBNET_IDS`, and
+-`DATABASE_SECURITY_GROUP_IDS`. Optional variables are
+-`AUTH_LAMBDA_ROLE_ARN`, `AUTHORIZER_LAMBDA_ROLE_ARN`,
+-`BACKEND_INTEGRATION_URI` (an ALB/NLB listener ARN), `VPC_LINK_SUBNET_IDS`, and
+-`VPC_LINK_SECURITY_GROUP_IDS`; list variables must be JSON arrays (for example,
+-`["subnet-a","subnet-b"]`). No AWS resource IDs are stored in this repository.
++and `JWT_PUBLIC_KEY_PARAMETER_ARN`. The Lambda consumes matching private
++subnets from `repo-k8s-infra` state and the database security group from
++`repo-db-infra` state; these IDs must not be set as GitHub variables. Optional variables are
++`AUTH_LAMBDA_ROLE_ARN`, and `AUTHORIZER_LAMBDA_ROLE_ARN`. VPC Link private
++subnet IDs, the internal ALB security group ID, and
++`internal_alb_listener_arn` are read from the matching `repo-k8s-infra` remote
++state; they are not GitHub variables. No AWS resource IDs are stored in this
++repository.
++
++`BACKEND_INTEGRATION_URI` is derived during CI from the selected environment's
++`repo-k8s-infra` Terraform state output `internal_alb_listener_arn`. The
++workflow fails closed when that state or output is unavailable or is not a
++valid listener ARN. Production also rejects the known HML listener name
++`tc3-hml-internal`; it never falls back to HML or to an auth-only deployment.
+ 
+ For AWS Academy/Lab, set the existing Lambda execution role as a non-secret
+ environment variable:
+@@ -133,14 +139,15 @@ backend, initialize the selected root, and run the usual Terraform commands.
+ Use `infra/prod` only for plan/apply; run apply only after review.
+ Provide the required variables through an uncommitted tfvars file.
+ Integration values still required for a full deployment are the JWT private-key
+-Secrets Manager ARN, database secret ARN, JWT public-key SSM parameter name and
+-ARN, Lambda VPC subnet/security-group IDs, and (when `deploy_auth_only=false`)
+-the ALB/NLB listener ARN as `backend_integration_uri` plus VPC Link
+-subnet/security-group IDs. The API Gateway backend URI is not known by this
++Secrets Manager ARN, database secret ARN, and JWT public-key SSM parameter name
++and ARN. Lambda VPC networking is read from matching K8s/DB remote state, and
++When `deploy_auth_only=false`, the ALB/NLB listener ARN is supplied as
++`backend_integration_uri`. The API Gateway backend URI is not known by this
+ repository and must be supplied by the Kubernetes/infrastructure deployment;
+-it must be an ALB/NLB listener ARN, not a normal HTTP URL. `backend_integration_uri`
+-must contain the listener ARN, plus VPC Link subnet/security-group IDs, to enable the
+-RFC-003 protected EKS route and Lambda Authorizer when `deploy_auth_only=false`.
++it must be an ALB/NLB listener ARN, not a normal HTTP URL. The VPC Link uses
++the matching private subnets and `internal_alb_security_group_id` from
++`repo-k8s-infra` state to enable the RFC-003 protected EKS route and Lambda
++Authorizer.
+ The Terraform module default `deploy_auth_only=true` is a safe local auth-only
+ fallback. The workflow default is `false`; its backend URI rule above ensures
+ that an orchestrated full deployment enables the protected backend path.
+@@ -156,8 +163,8 @@ npm test
+ JWT signing and API Gateway ownership follow accepted RFC-003 and RFC-006.
+ Terraform also exposes environment-scoped API Gateway outputs: API id and
+ endpoint, `/auth` route key, authorizer id, and protected route, integration,
+-VPC Link, and backend URI values when full integration is enabled. No
+-unsupported remote-state or cross-repository automation is assumed.
++VPC Link, and backend URI values when full integration is enabled. Lambda
++network inputs use the matching approved remote-state contracts.
+ Customer lookup uses the fixed cross-repository schema contract:
+ 
+ ```sql
+diff --git a/docs/agent-log.md b/docs/agent-log.md
+index a7188a6..c947082 100644
+--- a/docs/agent-log.md
++++ b/docs/agent-log.md
+@@ -1,12 +1,46 @@
+ # Agent log
+ 
+-## 2026-09-02 — Standard IAM HML destroy workflow
++## 2026-09-11 — Safe authentication failure diagnostics
+ 
+-- Allowed confirmed HML destroys with standard IAM credentials without requiring
+-  Academy mode or an AWS session token, while retaining production guards.
+-- Declared the standard IAM key pair as required and session/JWT/database values
+-  as optional so the `up` and `down` callers inherit only what each operation needs.
+-- No AWS action, commit, push, apply, or destroy was performed.
++- Added structured error fields to `authenticate_customer_failed`, including
++  safe error name, redacted message, correlation/request IDs, and available
++  Lambda deployment context. Request bodies, CPF values, tokens, passwords,
++  connection strings, and secrets remain excluded from logs.
++- Added DB and JWT failure redaction coverage while preserving the generic HTTP
++  500 response. Validation passed: focused tests (11), full suite (32),
++  typecheck, and build. No AWS apply or destroy was run.
++
++## 2026-09-09 — Kubernetes remote-state backend listener
++
++- CI now reads the selected HML/production `internal_alb_listener_arn` directly
++  from the matching `repo-k8s-infra` Terraform state, validates the listener ARN,
++  and fails closed when state or output is unavailable.
++- Preserved production rejection of the known HML listener. No AWS apply or
++  destroy was run.
++
++## 2026-09-04 — API Gateway VPC Link remote-state networking
++
++- HML and production now consume `private_subnet_ids` and
++  `internal_alb_security_group_id` from matching `repo-k8s-infra` state for the
++  private API Gateway VPC Link. Removed empty GitHub VPC Link inputs; the
++  existing ALB listener ARN integration and private route remain unchanged.
++- No AWS apply or destroy was run.
++
++## 2026-09-04 — Remote-state Lambda networking
++
++- Removed GitHub subnet/security-group inputs, including stale HML subnet
++  handling that caused Terraform plan failures.
++- HML and production now read matching private subnets from `repo-k8s-infra`
++  state and the database security group from `repo-db-infra` state. No AWS
++  apply or destroy was run.
++
++## 2026-09-04 — Explicit production destroy workflow
++
++- Added dispatch-only production destroy with the protected `production`
++  Environment and exact `DESTROY PROD` confirmation.
++- Kept HML destroy behavior, state backend, and external JWT/database secrets
++  unchanged; destroy-only Terraform placeholders are used without deleting
++  those external resources. No destroy was executed.
+ 
+ ## 2026-08-31 — Academy workflow and exact Lambda artifact
+ 
+@@ -155,3 +189,11 @@
+ - Added security-contract coverage for active-customer RS256 issuance and
+   authorizer decisions, plus correlation-safe structured success/error logs.
+ - Validation was run locally; no AWS command, Terraform apply, or destroy was run.
++
++## 2026-09-03 — Production backend listener guard
++
++- Production now requires its environment-scoped `BACKEND_INTEGRATION_URI` and
++  rejects the known HML `tc3-hml-internal` listener instead of cross-wiring the
++  API Gateway integration. The input remains the approved listener ARN output
++  from the matching `repo-k8s-infra` state; no remote-state shortcut or secret
++  handling was added. No Terraform apply was run.
+diff --git a/docs/rfcs/RFC-003-api-gateway-eks-integration.md b/docs/rfcs/RFC-003-api-gateway-eks-integration.md
+index 7c3d810..fe536ab 100644
+--- a/docs/rfcs/RFC-003-api-gateway-eks-integration.md
++++ b/docs/rfcs/RFC-003-api-gateway-eks-integration.md
+@@ -30,6 +30,9 @@ resources could be implemented for real.
+ - The Gateway's only responsibilities (`/auth` routes, authorizer wiring)
+   live in `repo-auth-serverless` already — co-locating ownership avoids a
+   cross-repo dependency for changes that only ever touch that repo.
++- The VPC Link uses the matching private subnet IDs and the internal ALB
++  security-group output from `repo-k8s-infra` remote state; Lambda/database
++  security groups are not reused for Gateway networking.
+ - HTTP API + VPC Link + ALB is cheaper and simpler than REST API + NLB, and
+   neither WAF-at-gateway nor usage plans nor request/response
+   transformation are current requirements.
+diff --git a/infra/hml/main.tf b/infra/hml/main.tf
+index 3bb589f..8ade5c8 100644
+--- a/infra/hml/main.tf
++++ b/infra/hml/main.tf
+@@ -8,13 +8,83 @@ data "aws_iam_policy_document" "lambda_assume" {
+   }
+ }
+ 
++data "aws_caller_identity" "current" {}
++
++data "terraform_remote_state" "k8s_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-k8s-infra/hml/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
++data "terraform_remote_state" "db_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-db-infra/hml/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
+ locals {
+-  lambda_package_path        = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
+-  create_auth_lambda_role    = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
+-  create_authorizer_role     = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
+-  auth_lambda_role_arn       = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
+-  authorizer_lambda_role_arn = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
+-  backend_enabled            = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  lambda_package_path         = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
++  create_auth_lambda_role     = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
++  create_authorizer_role      = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
++  auth_lambda_role_arn        = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
++  authorizer_lambda_role_arn  = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
++  backend_enabled             = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  database_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  database_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.db_infra.outputs.db_security_group_id]
++  vpc_link_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  vpc_link_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.k8s_infra.outputs.internal_alb_security_group_id]
++}
++
++resource "aws_security_group" "auth_lambda" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-lambda"
++  description = "Private egress for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["10.0.0.0/8"]
++  }
++}
++
++resource "aws_security_group" "secrets_manager_endpoint" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-secrets-manager-endpoint"
++  description = "Private Secrets Manager access for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  ingress {
++    description     = "Secrets Manager HTTPS from auth Lambda"
++    from_port       = 443
++    to_port         = 443
++    protocol        = "tcp"
++    security_groups = [aws_security_group.auth_lambda[0].id]
++  }
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["0.0.0.0/0"]
++  }
++}
++
++resource "aws_vpc_endpoint" "secrets_manager" {
++  count               = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  vpc_id              = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
++  vpc_endpoint_type   = "Interface"
++  subnet_ids          = local.database_subnet_ids
++  security_group_ids  = [aws_security_group.secrets_manager_endpoint[0].id]
++  private_dns_enabled = true
+ }
+ 
+ resource "aws_iam_role" "auth" {
+@@ -72,11 +142,11 @@ resource "aws_lambda_function" "auth" {
+   dynamic "vpc_config" {
+     for_each = var.auth_lambda_vpc_enabled ? [1] : []
+     content {
+-      subnet_ids         = var.database_subnet_ids
+-      security_group_ids = var.database_security_group_ids
++      subnet_ids         = local.database_subnet_ids
++      security_group_ids = [aws_security_group.auth_lambda[0].id]
+     }
+   }
+-  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
++  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, DATABASE_HOST = var.database_host, DATABASE_PORT = tostring(var.database_port), DATABASE_NAME = var.database_name, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
+ }
+ resource "aws_lambda_function" "authorizer" {
+   function_name    = "${var.name_prefix}-authorizer"
+@@ -115,11 +185,11 @@ resource "aws_apigatewayv2_route" "auth" {
+ resource "aws_apigatewayv2_vpc_link" "backend" {
+   count              = local.backend_enabled ? 1 : 0
+   name               = "${var.name_prefix}-backend"
+-  subnet_ids         = var.vpc_link_subnet_ids
+-  security_group_ids = var.vpc_link_security_group_ids
++  subnet_ids         = local.vpc_link_subnet_ids
++  security_group_ids = local.vpc_link_security_group_ids
+   lifecycle {
+     precondition {
+-      condition     = length(var.vpc_link_subnet_ids) > 0 && alltrue([for id in var.vpc_link_subnet_ids : trimspace(id) != ""]) && length(var.vpc_link_security_group_ids) > 0 && alltrue([for id in var.vpc_link_security_group_ids : trimspace(id) != ""])
++      condition     = length(local.vpc_link_subnet_ids) > 0 && alltrue([for id in local.vpc_link_subnet_ids : trimspace(id) != ""]) && length(local.vpc_link_security_group_ids) > 0 && alltrue([for id in local.vpc_link_security_group_ids : trimspace(id) != ""])
+       error_message = "VPC Link subnet and security-group IDs must be non-empty when backend integration is enabled."
+     }
+   }
+diff --git a/infra/hml/variables.tf b/infra/hml/variables.tf
+index 669e82f..573075c 100644
+--- a/infra/hml/variables.tf
++++ b/infra/hml/variables.tf
+@@ -10,6 +10,18 @@ variable "jwt_private_key_secret_arn" { type = string }
+ variable "jwt_public_key_parameter_name" { type = string }
+ variable "jwt_public_key_parameter_arn" { type = string }
+ variable "database_secret_arn" { type = string }
++variable "database_host" {
++  type    = string
++  default = ""
++}
++variable "database_port" {
++  type    = number
++  default = 5432
++}
++variable "database_name" {
++  type    = string
++  default = "workshop"
++}
+ variable "academy_mode" {
+   description = "Use the pre-existing AWS Academy LabRole and do not create IAM roles or policies."
+   type        = bool
+@@ -64,22 +76,6 @@ variable "auth_lambda_vpc_enabled" {
+   type    = bool
+   default = true
+ }
+-variable "database_security_group_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_security_group_ids) > 0 && alltrue([for id in var.database_security_group_ids : trimspace(id) != ""]))
+-    error_message = "database_security_group_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+-variable "database_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_subnet_ids) > 0 && alltrue([for id in var.database_subnet_ids : trimspace(id) != ""]))
+-    error_message = "database_subnet_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+ variable "backend_integration_uri" {
+   type    = string
+   default = ""
+@@ -92,11 +88,8 @@ variable "deploy_auth_only" {
+   type    = bool
+   default = true
+ }
+-variable "vpc_link_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-}
+-variable "vpc_link_security_group_ids" {
+-  type    = list(string)
+-  default = []
++
++variable "destroy_mode" {
++  type    = bool
++  default = false
+ }
+diff --git a/infra/prod/main.tf b/infra/prod/main.tf
+index ff1d407..f0ef04d 100644
+--- a/infra/prod/main.tf
++++ b/infra/prod/main.tf
+@@ -8,13 +8,93 @@ data "aws_iam_policy_document" "lambda_assume" {
+   }
+ }
+ 
++data "aws_caller_identity" "current" {}
++
++data "terraform_remote_state" "k8s_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-k8s-infra/prod/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
++data "terraform_remote_state" "db_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-db-infra/prod/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
+ locals {
+-  lambda_package_path        = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
+-  create_auth_lambda_role    = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
+-  create_authorizer_role     = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
+-  auth_lambda_role_arn       = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
+-  authorizer_lambda_role_arn = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
+-  backend_enabled            = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  lambda_package_path         = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
++  create_auth_lambda_role     = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
++  create_authorizer_role      = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
++  auth_lambda_role_arn        = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
++  authorizer_lambda_role_arn  = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
++  backend_enabled             = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  database_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  database_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.db_infra.outputs.db_security_group_id]
++  vpc_link_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  vpc_link_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.k8s_infra.outputs.internal_alb_security_group_id]
++}
++
++resource "aws_security_group" "auth_lambda" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-lambda"
++  description = "Private egress for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["10.0.0.0/8"]
++  }
++}
++
++resource "aws_vpc_security_group_ingress_rule" "auth_to_database" {
++  count                        = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  security_group_id            = local.database_security_group_ids[0]
++  referenced_security_group_id = aws_security_group.auth_lambda[0].id
++  from_port                    = 5432
++  to_port                      = 5432
++  ip_protocol                  = "tcp"
++  description                  = "Postgres from the auth Lambda"
++}
++
++resource "aws_security_group" "secrets_manager_endpoint" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-secrets-manager-endpoint"
++  description = "Private Secrets Manager access for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  ingress {
++    description     = "Secrets Manager HTTPS from auth Lambda"
++    from_port       = 443
++    to_port         = 443
++    protocol        = "tcp"
++    security_groups = [aws_security_group.auth_lambda[0].id]
++  }
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["0.0.0.0/0"]
++  }
++}
++
++resource "aws_vpc_endpoint" "secrets_manager" {
++  count               = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  vpc_id              = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
++  vpc_endpoint_type   = "Interface"
++  subnet_ids          = local.database_subnet_ids
++  security_group_ids  = [aws_security_group.secrets_manager_endpoint[0].id]
++  private_dns_enabled = true
+ }
+ 
+ resource "aws_iam_role" "auth" {
+@@ -69,11 +149,11 @@ resource "aws_lambda_function" "auth" {
+   dynamic "vpc_config" {
+     for_each = var.auth_lambda_vpc_enabled ? [1] : []
+     content {
+-      subnet_ids         = var.database_subnet_ids
+-      security_group_ids = var.database_security_group_ids
++      subnet_ids         = local.database_subnet_ids
++      security_group_ids = [aws_security_group.auth_lambda[0].id]
+     }
+   }
+-  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
++  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, DATABASE_HOST = var.database_host, DATABASE_PORT = tostring(var.database_port), DATABASE_NAME = var.database_name, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
+ }
+ resource "aws_lambda_function" "authorizer" {
+   function_name    = "${var.name_prefix}-authorizer"
+@@ -111,11 +191,11 @@ resource "aws_apigatewayv2_route" "auth" {
+ resource "aws_apigatewayv2_vpc_link" "backend" {
+   count              = local.backend_enabled ? 1 : 0
+   name               = "${var.name_prefix}-backend"
+-  subnet_ids         = var.vpc_link_subnet_ids
+-  security_group_ids = var.vpc_link_security_group_ids
++  subnet_ids         = local.vpc_link_subnet_ids
++  security_group_ids = local.vpc_link_security_group_ids
+   lifecycle {
+     precondition {
+-      condition     = length(var.vpc_link_subnet_ids) > 0 && alltrue([for id in var.vpc_link_subnet_ids : trimspace(id) != ""]) && length(var.vpc_link_security_group_ids) > 0 && alltrue([for id in var.vpc_link_security_group_ids : trimspace(id) != ""])
++      condition     = length(local.vpc_link_subnet_ids) > 0 && alltrue([for id in local.vpc_link_subnet_ids : trimspace(id) != ""]) && length(local.vpc_link_security_group_ids) > 0 && alltrue([for id in local.vpc_link_security_group_ids : trimspace(id) != ""])
+       error_message = "VPC Link subnet and security-group IDs must be non-empty when backend integration is enabled."
+     }
+   }
+diff --git a/infra/prod/variables.tf b/infra/prod/variables.tf
+index 00a94cb..0270d30 100644
+--- a/infra/prod/variables.tf
++++ b/infra/prod/variables.tf
+@@ -10,6 +10,18 @@ variable "jwt_private_key_secret_arn" { type = string }
+ variable "jwt_public_key_parameter_name" { type = string }
+ variable "jwt_public_key_parameter_arn" { type = string }
+ variable "database_secret_arn" { type = string }
++variable "database_host" {
++  type    = string
++  default = ""
++}
++variable "database_port" {
++  type    = number
++  default = 5432
++}
++variable "database_name" {
++  type    = string
++  default = "workshop"
++}
+ variable "academy_mode" {
+   description = "Use the pre-existing AWS Academy LabRole and temporary credentials."
+   type        = bool
+@@ -64,22 +76,6 @@ variable "auth_lambda_vpc_enabled" {
+   type    = bool
+   default = true
+ }
+-variable "database_security_group_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_security_group_ids) > 0 && alltrue([for id in var.database_security_group_ids : trimspace(id) != ""]))
+-    error_message = "database_security_group_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+-variable "database_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_subnet_ids) > 0 && alltrue([for id in var.database_subnet_ids : trimspace(id) != ""]))
+-    error_message = "database_subnet_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+ variable "backend_integration_uri" {
+   type    = string
+   default = ""
+@@ -92,11 +88,8 @@ variable "deploy_auth_only" {
+   type    = bool
+   default = true
+ }
+-variable "vpc_link_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-}
+-variable "vpc_link_security_group_ids" {
+-  type    = list(string)
+-  default = []
++
++variable "destroy_mode" {
++  type    = bool
++  default = false
+ }
+diff --git a/src/authenticate-customer/handler.test.ts b/src/authenticate-customer/handler.test.ts
+index 36a285a..0b01deb 100644
+--- a/src/authenticate-customer/handler.test.ts
++++ b/src/authenticate-customer/handler.test.ts
+@@ -1,7 +1,7 @@
+ import { describe, expect, it, vi } from "vitest";
+ import { generateKeyPairSync } from "node:crypto";
+ import jwt from "jsonwebtoken";
+-import { authenticateCustomer, normalizeCpf } from "./handler.js";
++import { authenticateCustomer, handler, normalizeCpf } from "./handler.js";
+ 
+ describe("CPF authentication", () => {
+   it("validates and normalizes CPF", () => expect(normalizeCpf("529.982.247-25")).toBe("52998224725"));
+@@ -31,6 +31,10 @@ describe("CPF authentication", () => {
+     expect(result.statusCode).toBe(400);
+     expect(lookup).not.toHaveBeenCalled();
+   });
++  it("ignores the Lambda context argument instead of treating it as a customer lookup", async () => {
++    const result = await handler({ body: "{}", headers: {}, requestContext: { requestId: "lambda-request-1" } as never }, { awsRequestId: "lambda-request-1" } as never);
++    expect(result.statusCode).toBe(400);
++  });
+   it("rejects a JSON null body as an invalid request", async () => {
+     const lookup = vi.fn();
+     const result = await authenticateCustomer({ body: "null", headers: {}, requestContext: { requestId: "corr-1" } as never }, lookup);
+@@ -47,4 +51,47 @@ describe("CPF authentication", () => {
+     const result = await authenticateCustomer({ body: "{}", headers: { "x-correlation-id": "   " }, requestContext: { requestId: "api-request-1" } as never }, vi.fn());
+     expect(result.headers?.["x-correlation-id"]).toBe("api-request-1");
+   });
++
++  it("logs a classified, redacted database failure while keeping the 500 response generic", async () => {
++    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
++    const cpf = "529.982.247-25";
++    const secret = "postgresql://user:password@db.example/test";
++    const result = await authenticateCustomer(
++      { body: JSON.stringify({ cpf }), headers: {}, requestContext: { requestId: "request-db-1" } as never },
++      async () => {
++        throw new Error(`query failed for ${cpf}: DATABASE_URL=${secret}; Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.signature password=hunter2`);
++      },
++    );
++
++    expect(result.statusCode).toBe(500);
++    expect(JSON.parse(result.body)).toEqual({ error: "internal_error", message: "Unable to authenticate" });
++    const log = JSON.parse(errorLog.mock.calls[0]?.[0] as string) as Record<string, unknown>;
++    expect(log).toMatchObject({ event: "authenticate_customer_failed", error_name: "Error", correlation_id: "request-db-1", request_id: "request-db-1" });
++    expect(String(log.error_message)).toContain("[REDACTED_CREDENTIAL]");
++    expect(String(log.error_message)).toContain("[REDACTED_CPF]");
++    expect(String(log.error_message)).not.toContain(cpf);
++    expect(String(log.error_message)).not.toContain(secret);
++    expect(String(log.error_message)).not.toContain("DATABASE_URL");
++    expect(String(log.error_message)).not.toContain("Bearer eyJ");
++    expect(String(log.error_message)).not.toContain("hunter2");
++    errorLog.mockRestore();
++  });
++
++  it("logs a redacted authentication failure without exposing JWT or secrets", async () => {
++    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
++    const result = await authenticateCustomer(
++      { body: JSON.stringify({ cpf: "529.982.247-25" }), headers: {}, requestContext: { requestId: "request-auth-1" } as never },
++      async () => ({ id: "c-1", active: true }),
++      async () => {
++        throw new Error("JWT signing failed: Bearer header-token password=secret-password");
++      },
++    );
++
++    expect(result.statusCode).toBe(500);
++    const log = JSON.parse(errorLog.mock.calls[0]?.[0] as string) as Record<string, unknown>;
++    expect(log).toMatchObject({ error_name: "Error", correlation_id: "request-auth-1" });
++    expect(String(log.error_message)).not.toContain("header-token");
++    expect(String(log.error_message)).not.toContain("secret-password");
++    errorLog.mockRestore();
++  });
+ });
+diff --git a/src/authenticate-customer/handler.ts b/src/authenticate-customer/handler.ts
+index d5a0433..f0b52bc 100644
+--- a/src/authenticate-customer/handler.ts
++++ b/src/authenticate-customer/handler.ts
+@@ -23,8 +23,45 @@ function response(statusCode: number, body: Record<string, unknown>, correlation
+   return { statusCode, headers: { "content-type": "application/json", "x-correlation-id": correlationId }, body: JSON.stringify(body) };
+ }
+ 
+-function log(level: "info" | "error", event: string, correlationId: string, startedAt: number): void {
+-  console.log(JSON.stringify({ level, event, correlation_id: correlationId, duration_ms: Date.now() - startedAt }));
++export function sanitizeErrorMessage(value: unknown): string {
++  let message: string;
++  try {
++    message = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
++  } catch {
++    message = "Unable to serialize error";
++  }
++
++  return message
++    .replace(/(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?):\/\/[^\s"'<>]+/gi, "[REDACTED_CONNECTION_STRING]")
++    .replace(/\bBearer\s+[^\s]+/gi, "Bearer [REDACTED]")
++    .replace(/\b\d{3}[.\s-]?\d{3}[.\s-]?\d{3}[.\s-]?\d{2}\b/g, "[REDACTED_CPF]")
++    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_JWT]")
++    .replace(/\b(?:password|passwd|secret|token|authorization|api[_-]?key|private[_-]?key|database_url|connection[_-]?string)\s*[:=]\s*[^\s,;}]+/gi, "[REDACTED_CREDENTIAL]")
++    .replace(/\b(?:DATABASE_URL|DATABASE_SECRET_ARN|JWT_PRIVATE_KEY_SECRET_ARN|JWT_PUBLIC_KEY_PARAM_NAME)\b/gi, "[REDACTED_CONFIG]")
++    .slice(0, 1000);
++}
++
++function safeErrorName(error: unknown): string {
++  const name = error instanceof Error ? error.name : error && typeof error === "object" ? error.constructor?.name : undefined;
++  return typeof name === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(name) ? name : "UnknownError";
++}
++
++function log(level: "info" | "error", event: string, correlationId: string, startedAt: number, error?: unknown, requestId?: string): void {
++  const record: Record<string, unknown> = {
++    level,
++    event,
++    correlation_id: correlationId,
++    duration_ms: Date.now() - startedAt,
++  };
++  if (requestId) record.request_id = requestId;
++  if (process.env.DEPLOY_ENVIRONMENT) record.environment = process.env.DEPLOY_ENVIRONMENT;
++  if (process.env.AWS_LAMBDA_FUNCTION_NAME) record.function_name = process.env.AWS_LAMBDA_FUNCTION_NAME;
++  if (process.env.AWS_LAMBDA_FUNCTION_VERSION) record.function_version = process.env.AWS_LAMBDA_FUNCTION_VERSION;
++  if (error !== undefined) {
++    record.error_name = safeErrorName(error);
++    record.error_message = sanitizeErrorMessage(error instanceof Error ? error.message : error);
++  }
++  (level === "error" ? console.error : console.log)(JSON.stringify(record));
+ }
+ 
+ export async function authenticateCustomer(
+@@ -65,10 +102,13 @@ export async function authenticateCustomer(
+       audience: contract.audience,
+       subject_claim: contract.subject,
+     });
+-  } catch {
+-    log("error", "authenticate_customer_failed", correlationId, startedAt);
++  } catch (error) {
++    log("error", "authenticate_customer_failed", correlationId, startedAt, error, event.requestContext.requestId);
+     return response(500, { error: "internal_error", message: "Unable to authenticate" }, correlationId);
+   }
+ }
+ 
+-export const handler = authenticateCustomer;
++export async function handler(event: Pick<APIGatewayProxyEvent, "body" | "headers" | "requestContext">, _context?: unknown): Promise<APIGatewayProxyResult> {
++  void _context;
++  return authenticateCustomer(event);
++}
+diff --git a/src/lib/customer-repository.test.ts b/src/lib/customer-repository.test.ts
+index 5646595..4e44000 100644
+--- a/src/lib/customer-repository.test.ts
++++ b/src/lib/customer-repository.test.ts
+@@ -71,7 +71,7 @@ WHERE "documento" = $1
+     await expect(findCustomerWithFallback("52998224725")).resolves.toBeNull();
+ 
+     expect(pg.Pool).toHaveBeenCalledWith({
+-      connectionString: "postgresql://user:password@database.example:5432/app?sslmode=require",
++      connectionString: "postgresql://user:password@database.example:5432/app?sslmode=require&uselibpqcompat=true",
+       max: 2,
+     });
+   });
+diff --git a/src/lib/customer-repository.ts b/src/lib/customer-repository.ts
+index 2487f58..3913ee6 100644
+--- a/src/lib/customer-repository.ts
++++ b/src/lib/customer-repository.ts
+@@ -22,10 +22,13 @@ async function connectionString(): Promise<string> {
+   const value = JSON.parse(result.SecretString) as Record<string, unknown>;
+   if (typeof value.connectionString === "string") return value.connectionString;
+   if (typeof value.url === "string") return value.url;
+-  if (typeof value.host !== "string" || typeof value.username !== "string" || typeof value.password !== "string") {
++  const host = typeof value.host === "string" ? value.host : process.env.DATABASE_HOST;
++  const port = value.port ?? process.env.DATABASE_PORT ?? 5432;
++  const database = value.dbname ?? value.database ?? process.env.DATABASE_NAME ?? "postgres";
++  if (typeof host !== "string" || !host || typeof value.username !== "string" || typeof value.password !== "string") {
+     throw new Error("database secret has no connection details");
+   }
+-  return `postgresql://${encodeURIComponent(value.username)}:${encodeURIComponent(value.password)}@${value.host}:${String(value.port ?? 5432)}/${String(value.dbname ?? value.database ?? "postgres")}?sslmode=require`;
++  return `postgresql://${encodeURIComponent(value.username)}:${encodeURIComponent(value.password)}@${host}:${String(port)}/${String(database)}?sslmode=require&uselibpqcompat=true`;
+ }
+ 
+ export async function findCustomer(cpf: string): Promise<Customer | null> {
+diff --git a/src/workflow-contract.test.ts b/src/workflow-contract.test.ts
+index a58343b..37af7ab 100644
+--- a/src/workflow-contract.test.ts
++++ b/src/workflow-contract.test.ts
+@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
+ import { describe, expect, it } from "vitest";
+ 
+ const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
++const downWorkflow = readFileSync(new URL("../.github/workflows/down.yml", import.meta.url), "utf8");
+ 
+ describe("delivery workflow contract", () => {
+   it("keeps automatic HML and protected production delivery distinct", () => {
+@@ -13,16 +14,16 @@ describe("delivery workflow contract", () => {
+     expect(workflow).toContain("aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}");
+     expect(workflow).toContain("aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}");
+     expect(workflow).toContain("aws-session-token: ${{ env.AWS_SESSION_TOKEN }}");
+-    expect(workflow).toContain("if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') || ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'apply'");
+-    expect(workflow).not.toContain("Production requires OIDC credentials; Academy credentials are not permitted.");
++    expect(workflow).toContain("if: env.DEPLOY_ENVIRONMENT == 'prod' && env.DEPLOY_OPERATION == 'apply' && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')");
++    expect(workflow).toContain('[ "$CONFIRM" = "APPLY PROD" ]');
+   });
+ 
+   it("keeps destructive operations manual and HML-only", () => {
+     expect(workflow).toContain("options: [plan, apply, destroy-plan, destroy]");
+     expect(workflow).toContain('[ "$ENVIRONMENT" = "hml" ]');
+     expect(workflow).toContain('[ "$CONFIRM" = "DESTROY HML" ]');
+-    expect(workflow).not.toContain("Destroy operations require Academy mode.");
+     expect(workflow).toContain('TFVARS_ACADEMY_MODE: "false"');
++    expect(workflow).toContain('Destroy requires confirm="DESTROY HML".');
+   });
+ 
+   it("ships the exact package used by the saved plan", () => {
+@@ -31,4 +32,30 @@ describe("delivery workflow contract", () => {
+     expect(workflow).toContain("terraform-plan-${{ env.DEPLOY_ENVIRONMENT }}-${{ github.run_id }}");
+     expect(workflow).toContain("path: .");
+   });
++
++  it("does not allow production to use an HML backend listener", () => {
++    expect(workflow).toContain("Validate production backend source");
++    expect(workflow).toContain("internal_alb_listener_arn");
++    expect(workflow).toContain("repo-k8s-infra/${DEPLOY_ENVIRONMENT}/terraform.tfstate");
++    expect(workflow).toContain("aws s3 cp");
++    expect(workflow).toContain("has no valid internal_alb_listener_arn output");
++    expect(workflow).not.toContain("TFVARS_BACKEND_INTEGRATION_URI: ${{ vars.BACKEND_INTEGRATION_URI }}");
++    expect(workflow).toContain("tc3-hml-internal");
++    expect(workflow).toContain("production environment BACKEND_INTEGRATION_URI");
++  });
++
++  it("allows production destroy only through the explicit dispatch contract", () => {
++    expect(workflow).toContain('Production destroy is allowed only through workflow_dispatch.');
++    expect(workflow).toContain('[ "$CONFIRM" = "DESTROY PROD" ]');
++    expect(workflow).not.toContain('Production destroy requires Academy mode.');
++    expect(workflow).not.toContain('Destroy operations require Academy mode.');
++    expect(workflow).toContain('Destroy requires confirm="DESTROY HML".');
++    expect(workflow).toContain("environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production'");
++    expect(workflow).toContain('prepare-destroy-backend.sh repo-auth-serverless "${{ env.DEPLOY_ENVIRONMENT }}"');
++    expect(workflow).toContain("working-directory: infra/${{ env.DEPLOY_ENVIRONMENT }}");
++    expect(workflow).toContain("external JWT/database secrets and S3 backend");
++    expect(downWorkflow).toContain("options: [hml, prod]");
++    expect(downWorkflow).toContain("environment: ${{ inputs.environment }}");
++    expect(downWorkflow).toContain("operation: destroy");
++  });
+ });

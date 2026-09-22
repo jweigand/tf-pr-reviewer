@@ -1,0 +1,14 @@
+diff --git a/variables.tf b/variables.tf
+index cbfd833..3d39118 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -41,7 +41,7 @@ variable "ssh_users" {
+ }
+ 
+ variable "ssh_source_ranges" {
+-  description = "Source ranges allowed to reach the jumphost on tcp/22. Snäv in denna till lagets faktiska IP-adresser när de är kända."
++  description = "Source ranges allowed to reach the jumphost on tcp/22. Restricted to Google Cloud IAP."
+   type        = list(string)
+-  default     = ["0.0.0.0/0"]
++  default     = ["35.235.240.0/20"]
+ }

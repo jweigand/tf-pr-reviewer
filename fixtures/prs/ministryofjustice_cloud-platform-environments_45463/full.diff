@@ -1,0 +1,542 @@
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/cronjob-s3-transfer.yaml b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/cronjob-s3-transfer.yaml
+index 5a8dd46960..e31d90b94a 100644
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/cronjob-s3-transfer.yaml
++++ b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/cronjob-s3-transfer.yaml
+@@ -1,9 +1,21 @@
++# =============================================================================
++# APG-2664 — NEC pipeline decommissioned 2026-09-10
++# This CronJob is intentionally suspended. The NEC ingest pipeline is being
++# retired: the final .bak was received Thu 10 Sep 2026 and both preprod and
++# prod RDS instances have been manually snapshotted (see APG-2664 ticket for
++# snapshot ARNs + KMS key ARNs).
++# DO NOT unsuspend without first reviewing APG-2664. The source upload bucket
++# will be empty (NEC's DataSync role revoked in preprod PR APG-2664/preprod-...)
++# so any run would be a no-op at best; at worst it may fire alerts.
++# =============================================================================
+ apiVersion: batch/v1
+ kind: CronJob
+ metadata:
+   name: hmpps-manage-and-deliver-acp-s3-transfer
+   namespace: hmpps-manage-and-deliver-accredited-programmes-prod
+ spec:
++  # APG-2664: suspended — pipeline decommissioned. See banner above.
++  suspend: true
+   #  Run every night at 05:00 UTC (06:00 BST)
+   schedule: "0 5 * * *"
+   concurrencyPolicy: Forbid
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore.yaml b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore.yaml
+index aa30e8afe0..7ec9111b38 100644
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore.yaml
++++ b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore.yaml
+@@ -1,9 +1,23 @@
++# =============================================================================
++# APG-2664 — NEC pipeline decommissioned 2026-09-10
++# This CronJob is intentionally suspended. The NEC ingest pipeline is being
++# retired: the final .bak was received Thu 10 Sep 2026 and both preprod and
++# prod RDS instances have been manually snapshotted (see APG-2664 ticket for
++# snapshot ARNs + KMS key ARNs).
++# Both SQLSERVER_BACKUP_S3_BUCKET_NAME env vars below have been invalidated
++# to "APG-2664-DECOMMISSIONED" so any accidental unsuspend fails fast without
++# touching the DB — the find-backup-file init container will get AccessDenied
++# from S3 and the job will fail before the destructive db-restore step runs.
++# DO NOT unsuspend without first reviewing APG-2664.
++# =============================================================================
+ apiVersion: batch/v1
+ kind: CronJob
+ metadata:
+   name: db-restore-cronjob
+   namespace: hmpps-manage-and-deliver-accredited-programmes-prod
+ spec:
++  # APG-2664: suspended — pipeline decommissioned. See banner above.
++  suspend: true
+   # Run daily at 06:30 UTC — after preprod's restore completes (05:45 + ~8min).
+   # Uses the same .bak file from preprod's backup bucket.
+   schedule: "30 6 * * *"
+@@ -111,8 +125,10 @@ spec:
+                 - name: HOME
+                   value: /tmp
+                 # Reads from preprod backup bucket — prod has cross-namespace read access
++                # APG-2664: invalidated. Any accidental unsuspend fails at find-backup-file
++                # step with S3 AccessDenied before the destructive db-restore container runs.
+                 - name: SQLSERVER_BACKUP_S3_BUCKET_NAME
+-                  value: "cloud-platform-421f9ae70e6559d242c61fe413ef46a4"
++                  value: "APG-2664-DECOMMISSIONED"
+               command:
+                 - /bin/bash
+                 - -c
+@@ -217,8 +233,9 @@ spec:
+                       name: rds-sqlserver-instance-output
+                       key: database_password
+                 # Reads from preprod backup bucket — prod has cross-namespace read access
++                # APG-2664: invalidated. See banner at top of file.
+                 - name: SQLSERVER_BACKUP_S3_BUCKET_NAME
+-                  value: "cloud-platform-421f9ae70e6559d242c61fe413ef46a4"
++                  value: "APG-2664-DECOMMISSIONED"
+               command:
+                 - /bin/bash
+                 - -c
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore_one_off.yaml b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore_one_off.yaml
+deleted file mode 100644
+index ae1d2e0561..0000000000
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/db_restore_one_off.yaml
++++ /dev/null
+@@ -1,249 +0,0 @@
+-# One-off Job for initial data load or ad-hoc re-restores.
+-# Usage: kubectl apply -f db_restore_one_off.yaml
+-# Clean up after: kubectl delete job db-restore-from-preprod-001
+-# Increment the name suffix (e.g. -002) for subsequent runs.
+----
+-apiVersion: batch/v1
+-kind: Job
+-metadata:
+-  name: db-restore-from-preprod-001
+-  namespace: hmpps-manage-and-deliver-accredited-programmes-prod
+-spec:
+-  backoffLimit: 1
+-  activeDeadlineSeconds: 5400  # 90 minutes
+-  template:
+-    spec:
+-      serviceAccountName: irsa-sqlserver
+-      restartPolicy: OnFailure
+-      volumes:
+-        - name: backup-info
+-          emptyDir: {}
+-      initContainers:
+-        - name: find-backup-file
+-          image: public.ecr.aws/aws-cli/aws-cli:2.15.15
+-          securityContext:
+-            runAsUser: 1000
+-            runAsNonRoot: true
+-            allowPrivilegeEscalation: false
+-            capabilities:
+-              drop:
+-                - ALL
+-            seccompProfile:
+-              type: RuntimeDefault
+-          volumeMounts:
+-            - name: backup-info
+-              mountPath: /backup-info
+-          env:
+-            - name: HOME
+-              value: /tmp
+-            # Hardcoded to preprod backup bucket for initial data load
+-            - name: SQLSERVER_BACKUP_S3_BUCKET_NAME
+-              value: "cloud-platform-421f9ae70e6559d242c61fe413ef46a4"
+-          command:
+-            - /bin/bash
+-            - -c
+-            - |
+-              set -euo pipefail
+-
+-              echo "Searching for latest backup in s3://${SQLSERVER_BACKUP_S3_BUCKET_NAME}/"
+-
+-              BACKUP_KEY=$(aws s3 ls "s3://${SQLSERVER_BACKUP_S3_BUCKET_NAME}/" \
+-                --recursive \
+-                | awk '{print $4}' \
+-                | grep '\.bak$' \
+-                | sort \
+-                | tail -1)
+-
+-              if [ -z "${BACKUP_KEY}" ]; then
+-                echo "No backup file found in s3://${SQLSERVER_BACKUP_S3_BUCKET_NAME}/"
+-                exit 1
+-              fi
+-
+-              echo "Found backup file: ${BACKUP_KEY}"
+-              echo "${BACKUP_KEY}" > /backup-info/backup-key
+-
+-        - name: port-forward
+-          image: ministryofjustice/port-forward
+-          restartPolicy: Always
+-          securityContext:
+-            runAsNonRoot: true
+-            allowPrivilegeEscalation: false
+-            capabilities:
+-              drop:
+-                - ALL
+-            seccompProfile:
+-              type: RuntimeDefault
+-          ports:
+-            - containerPort: 1433
+-          env:
+-            - name: REMOTE_HOST
+-              valueFrom:
+-                secretKeyRef:
+-                  name: rds-sqlserver-instance-output
+-                  key: rds_instance_address
+-            - name: LOCAL_PORT
+-              valueFrom:
+-                configMapKeyRef:
+-                  name: rds-sqlserver-restore-config-map
+-                  key: db_port
+-            - name: REMOTE_PORT
+-              valueFrom:
+-                configMapKeyRef:
+-                  name: rds-sqlserver-restore-config-map
+-                  key: db_port
+-      containers:
+-        - name: db-restore
+-          image: mcr.microsoft.com/mssql/server:2019-CU31-ubuntu-20.04
+-          imagePullPolicy: IfNotPresent
+-          securityContext:
+-            runAsUser: 10001
+-            runAsNonRoot: true
+-            allowPrivilegeEscalation: false
+-            capabilities:
+-              drop:
+-                - ALL
+-            seccompProfile:
+-              type: RuntimeDefault
+-          volumeMounts:
+-            - name: backup-info
+-              mountPath: /backup-info
+-          env:
+-            - name: DB_PORT
+-              valueFrom:
+-                configMapKeyRef:
+-                  name: rds-sqlserver-restore-config-map
+-                  key: db_port
+-            - name: DATABASE_NAME
+-              valueFrom:
+-                secretKeyRef:
+-                  name: rds-sqlserver-instance-output
+-                  key: database_name
+-            - name: DATABASE_USERNAME
+-              valueFrom:
+-                secretKeyRef:
+-                  name: rds-sqlserver-instance-output
+-                  key: database_username
+-            - name: DATABASE_PASSWORD
+-              valueFrom:
+-                secretKeyRef:
+-                  name: rds-sqlserver-instance-output
+-                  key: database_password
+-            # Hardcoded to preprod backup bucket for initial data load
+-            - name: SQLSERVER_BACKUP_S3_BUCKET_NAME
+-              value: "cloud-platform-421f9ae70e6559d242c61fe413ef46a4"
+-          command:
+-            - /bin/bash
+-            - -c
+-            - |
+-              set -euo pipefail
+-
+-              # Locate sqlcmd binary
+-              SQLCMD=/opt/mssql-tools18/bin/sqlcmd
+-              if [ ! -f "${SQLCMD}" ]; then
+-                SQLCMD=/opt/mssql-tools/bin/sqlcmd
+-              fi
+-
+-              BACKUP_KEY=$(cat /backup-info/backup-key)
+-              if [ -z "${BACKUP_KEY}" ]; then
+-                echo "ERROR: /backup-info/backup-key is empty"
+-                exit 1
+-              fi
+-              BACKUP_S3_ARN="arn:aws:s3:::${SQLSERVER_BACKUP_S3_BUCKET_NAME}/${BACKUP_KEY}"
+-
+-              echo "Starting restore at $(date)"
+-              echo "Source : ${BACKUP_S3_ARN}"
+-              echo "Target : ${DATABASE_NAME}"
+-
+-              # Wait for port-forward sidecar
+-              echo "Waiting for SQL Server to be reachable..."
+-              RETRIES=0
+-              until "${SQLCMD}" -S "localhost,${DB_PORT}" -U "${DATABASE_USERNAME}" -P "${DATABASE_PASSWORD}" -C -Q "SELECT 1" > /dev/null 2>&1; do
+-                RETRIES=$((RETRIES + 1))
+-                if [ "${RETRIES}" -ge 30 ]; then
+-                  echo "Timed out after $((RETRIES * 10))s"
+-                  exit 1
+-                fi
+-                echo "  attempt ${RETRIES}/30 — retrying in 10s..."
+-                sleep 10
+-              done
+-              echo "SQL Server reachable."
+-
+-              # Submit the RDS restore task — first restore, no existing DB to drop
+-              echo "Submitting rds_restore_database task..."
+-              SUBMIT_OUTPUT=$("${SQLCMD}" \
+-                -S "localhost,${DB_PORT}" \
+-                -U "${DATABASE_USERNAME}" \
+-                -P "${DATABASE_PASSWORD}" \
+-                -W \
+-                -C -Q "EXEC msdb.dbo.rds_restore_database
+-                      @restore_db_name    = '${DATABASE_NAME}',
+-                      @s3_arn_to_restore_from = '${BACKUP_S3_ARN}',
+-                      @with_norecovery    = 0,
+-                      @type               = 'FULL';" 2>&1) || true
+-
+-              # Check for SQL error
+-              if echo "${SUBMIT_OUTPUT}" | grep -qE '^Msg [0-9]+, Level [0-9]+'; then
+-                echo "rds_restore_database returned a SQL error:"
+-                echo "${SUBMIT_OUTPUT}"
+-                exit 1
+-              fi
+-
+-              # Extract task_id
+-              TASK_ID=$(echo "${SUBMIT_OUTPUT}" | grep -oE 'Task Id:\s*[0-9]+' | grep -oE '[0-9]+' || true)
+-              if [ -z "${TASK_ID}" ]; then
+-                TASK_ID=$(echo "${SUBMIT_OUTPUT}" | grep -oE '^\s*[0-9]+' | head -1 | tr -d ' ' || true)
+-              fi
+-
+-              if [ -z "${TASK_ID}" ]; then
+-                echo "Failed to extract task_id:"
+-                echo "${SUBMIT_OUTPUT}"
+-                exit 1
+-              fi
+-
+-              echo "Restore task submitted. Task ID: ${TASK_ID}"
+-              echo "Polling rds_task_status..."
+-
+-              # Poll every 30s; timeout 60 minutes
+-              POLL_COUNT=0
+-              CONSECUTIVE_FAILURES=0
+-              while true; do
+-                STATUS_OUTPUT=$("${SQLCMD}" \
+-                  -S "localhost,${DB_PORT}" \
+-                  -U "${DATABASE_USERNAME}" \
+-                  -P "${DATABASE_PASSWORD}" \
+-                  -h -1 -W \
+-                  -C -Q "EXEC msdb.dbo.rds_task_status @task_id = ${TASK_ID};" 2>&1) || true
+-
+-                echo "$(date) | ${STATUS_OUTPUT}"
+-
+-                LIFECYCLE=$(echo "${STATUS_OUTPUT}" | grep -oE '\b(SUCCESS|ERROR|CANCELLED|CREATED|IN_PROGRESS)\b' | head -1 || true)
+-
+-                if [ -z "${LIFECYCLE}" ]; then
+-                  CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+-                  if [ "${CONSECUTIVE_FAILURES}" -ge 5 ]; then
+-                    echo "Port-forward appears dead"
+-                    exit 1
+-                  fi
+-                else
+-                  CONSECUTIVE_FAILURES=0
+-                fi
+-
+-                if [ "${LIFECYCLE}" = "SUCCESS" ]; then
+-                  echo "Restore completed successfully at $(date)"
+-                  exit 0
+-                fi
+-
+-                if [ "${LIFECYCLE}" = "ERROR" ] || [ "${LIFECYCLE}" = "CANCELLED" ]; then
+-                  echo "Restore failed (lifecycle=${LIFECYCLE}) at $(date)"
+-                  exit 1
+-                fi
+-
+-                POLL_COUNT=$((POLL_COUNT + 1))
+-                if [ "${POLL_COUNT}" -ge 120 ]; then
+-                  echo "Timed out after 60 minutes"
+-                  exit 1
+-                fi
+-
+-                sleep 30
+-              done
+-
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/irsa.tf b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/irsa.tf
+index b919a76b83..27a5930b69 100644
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/irsa.tf
++++ b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/irsa.tf
+@@ -85,6 +85,12 @@ module "irsa-sqlserver" {
+     {
+       # Cross-namespace: read preprod backup bucket for initial data load and Phase 2 copy
+       preprod_backup_s3_read = aws_iam_policy.preprod_backup_s3_read.arn
++    },
++    {
++      # APG-2664: write access to the archive bucket so the sqlserver_service_pod
++      # can copy the final .bak into it. Note: the archive bucket's deny policy
++      # blocks DeleteObject* even for this role — the pod can PUT but never delete.
++      archive_s3_bucket_policy = module.archive_s3_bucket.irsa_policy_arn
+     }
+   )
+ 
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/rds-sqlserver.tf b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/rds-sqlserver.tf
+index fc9655c98b..520c179b2f 100644
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/rds-sqlserver.tf
++++ b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/rds-sqlserver.tf
+@@ -21,6 +21,13 @@ module "sqlserver" {
+   vpc_name                   = var.vpc_name
+   character_set_name         = var.character_set_name
+ 
++  # APG-2664: prevents accidental deletion of the instance holding the final NEC
++  # data. If instance deletion is ever legitimately needed, flip to false via a
++  # Terraform PR first. Note: manual snapshot hmpps-acp-prod-nec-final-20260910095751
++  # exists and is encrypted with KMS key .../5c893314-21b1-4993-bada-eab31d5b71b5 —
++  # do NOT delete that KMS key or the snapshot becomes unrecoverable.
++  deletion_protection = true
++
+ 
+   enable_irsa = true
+ 
+diff --git a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/s3.tf b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/s3.tf
+index f1f58e2d2a..8e116bc980 100644
+--- a/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/s3.tf
++++ b/namespaces/live.cloud-platform.service.justice.gov.uk/hmpps-manage-and-deliver-accredited-programmes-prod/resources/s3.tf
+@@ -1,6 +1,6 @@
+ # Existing S3 bucket — kept as-is, do not modify.
+ module "s3_bucket" {
+-  source = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.0"
++  source = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.1"
+ 
+   team_name              = var.team_name
+   business_unit          = var.business_unit
+@@ -39,8 +39,12 @@ resource "kubernetes_secret" "s3_bucket" {
+ 
+ # New dedicated S3 bucket for SQL Server backup/restore pipeline.
+ # Separate from the existing s3_bucket to avoid any disruption.
++# APG-2664: the 14-day lifecycle rule was removed 2026-09-10. This bucket is
++# no longer actively written to (cronjob-s3-transfer is suspended) so no new
++# files will accumulate. Contents currently empty; kept to avoid disturbing
++# the module state until PR 3 removes it entirely.
+ module "sqlserver_backup_s3_bucket" {
+-  source = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.0"
++  source = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.1"
+ 
+   team_name              = var.team_name
+   business_unit          = var.business_unit
+@@ -50,20 +54,8 @@ module "sqlserver_backup_s3_bucket" {
+   infrastructure_support = var.infrastructure_support
+   namespace              = var.namespace
+ 
+-  # Expire old .bak files after 14 days — the DB restore only ever uses the latest file.
+-  # Files accumulate at ~32GB/day so this keeps storage costs bounded.
+-  lifecycle_rule = [
+-    {
+-      enabled = true
+-      id      = "expire-old-backups"
+-
+-      expiration = [
+-        {
+-          days = 14
+-        },
+-      ]
+-    },
+-  ]
++  # APG-2664: lifecycle rule removed. Bucket is no longer written to.
++  lifecycle_rule = []
+ 
+   providers = {
+     aws = aws.london
+@@ -85,7 +77,7 @@ resource "kubernetes_secret" "sqlserver_backup_s3_bucket" {
+ # Upload bucket — NEC DataSync will push .bak files here (once their prod role is created).
+ # The s3-transfer CronJob copies from here to the backup bucket, then deletes.
+ module "upload_s3_bucket" {
+-  source                 = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.0"
++  source                 = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.1"
+   team_name              = var.team_name
+   business_unit          = var.business_unit
+   application            = var.application
+@@ -167,7 +159,7 @@ resource "kubernetes_secret" "upload_s3_bucket" {
+ }
+ 
+ module "s3_upload_logging_bucket" {
+-  source                 = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.0"
++  source                 = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.1"
+   team_name              = var.team_name
+   business_unit          = var.business_unit
+   application            = var.application
+@@ -221,3 +213,107 @@ resource "kubernetes_secret" "s3_upload_logging_bucket" {
+     BUCKET_NAME = module.s3_upload_logging_bucket.bucket_name
+   }
+ }
++
++# =============================================================================
++# APG-2664 — Archive bucket for final NEC .bak file(s), forever.
++#
++# Created 2026-09-10 as part of NEC pipeline decommission. Purpose: preserve
++# the final NEC SQL Server backup (backup-production-IM-dbo-only-20260909013009.bak,
++# ingested Thu 10 Sep 2026) forever, alongside the RDS manual snapshot
++# hmpps-acp-prod-nec-final-20260910095751.
++#
++# Protection layers (F1, F7, F8, F15, F16, F26):
++#   1. Versioning enabled — resists overwrite/delete via object version restore.
++#   2. Bucket policy denies s3:DeleteObject*, s3:DeleteObjectVersion*,
++#      s3:DeleteBucket, s3:DeleteBucketPolicy on Principal "*" — no IAM role
++#      or user in this account (including irsa-sqlserver) can delete objects
++#      or the bucket, nor wipe the deny policy. AWS account root retains the
++#      ability to change the bucket policy (documented AWS behaviour, F26) —
++#      this is not attempted-attack resistant, it is *operational-mistake*
++#      resistant.
++#   3. Bucket-policy MUTATION (PutBucketPolicy/PutLifecycleConfiguration/
++#      PutBucketVersioning) is intentionally NOT denied — those flow via
++#      normal Terraform PRs under Cloud Platform review, which is the actual
++#      change gate. Denying them would make this a one-way trip and block
++#      legitimate future ops (e.g. Glacier transition per D17).
++#   4. No lifecycle rule — objects remain in S3 Standard indefinitely (D2, D17).
++#   5. prevent_destroy = true on the kubernetes_secret below acts as a Terraform
++#      tripwire against accidental module removal.
++#
++# Deletion requires a Terraform PR that relaxes the bucket policy first, then
++# a separate PR that removes the module. No break-glass exemption (D8, F16).
++#
++# The shared s3-bucket module hardcodes force_destroy = "true" (F1) so this
++# module block MUST NEVER be removed while the archive holds data.
++# =============================================================================
++module "archive_s3_bucket" {
++  source = "github.com/ministryofjustice/cloud-platform-terraform-s3-bucket?ref=5.3.1"
++
++  team_name              = var.team_name
++  business_unit          = var.business_unit
++  application            = var.application
++  is_production          = var.is_production
++  environment_name       = var.environment
++  infrastructure_support = var.infrastructure_support
++  namespace              = var.namespace
++
++  versioning = true
++
++  # No lifecycle rule — objects stay in S3 Standard forever (D2).
++  # A ~32 GB .bak costs ~$0.74/month at Standard. Future phased optimisation
++  # to GLACIER_IR is documented in D17 but deliberately deferred.
++  lifecycle_rule = []
++
++  # Deny-delete bucket policy (D8, F1, F16). Blanket deny with no break-glass
++  # exemption — deletion requires a Terraform PR to relax this policy first.
++  # $${bucket_arn} is the templating token used by the shared module's
++  # replace() call (verified in module source main.tf line 50).
++  bucket_policy = jsonencode({
++    Version = "2012-10-17"
++    Statement = [
++      {
++        Sid       = "APG2664DenyDelete"
++        Effect    = "Deny"
++        Principal = "*"
++        Action = [
++          "s3:DeleteObject",
++          "s3:DeleteObjectTagging",
++          "s3:DeleteObjectVersion",
++          "s3:DeleteObjectVersionTagging",
++          "s3:DeleteBucket",
++          "s3:DeleteBucketPolicy"
++        ]
++        Resource = [
++          "$${bucket_arn}",
++          "$${bucket_arn}/*"
++        ]
++      }
++    ]
++  })
++
++  providers = {
++    aws = aws.london
++  }
++}
++
++# The prevent_destroy on this secret is a Terraform tripwire (F24). If the
++# archive module block is removed from .tf, this secret's data-source references
++# become undefined and plan errors out at reference-resolution — nudging the
++# reviewer before any destructive action. A determined commit that removes
++# BOTH this secret block and the module block simultaneously will bypass the
++# tripwire; the deny bucket policy above is the ultimate defence.
++resource "kubernetes_secret" "archive_s3_bucket" {
++  metadata {
++    name      = "archive-s3-bucket-output"
++    namespace = var.namespace
++  }
++
++  data = {
++    bucket_arn  = module.archive_s3_bucket.bucket_arn
++    bucket_name = module.archive_s3_bucket.bucket_name
++  }
++
++  lifecycle {
++    prevent_destroy = true
++  }
++}

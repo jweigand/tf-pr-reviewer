@@ -1,0 +1,10 @@
+diff --git a/iac/environments/dev/rg.tf b/iac/environments/dev/rg.tf
+index d225381..80ddae6 100644
+--- a/iac/environments/dev/rg.tf
++++ b/iac/environments/dev/rg.tf
+@@ -1,4 +1,5 @@
+ # This is the main.tf file for the test environment
++# dummy change to validate dev-pr-review.yml + dev-tf-deploy.yml end to end
+ module "rg" {
+   source = "../../modules/terraform-azure-resourcegroup"
+ 

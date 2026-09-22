@@ -1,0 +1,138 @@
+diff --git a/docs/assets/final-project-end-state.architecture.json b/docs/assets/final-project-end-state.architecture.json
+index 13d3a87..9da4e01 100644
+--- a/docs/assets/final-project-end-state.architecture.json
++++ b/docs/assets/final-project-end-state.architecture.json
+@@ -38,7 +38,7 @@
+     { "from": "terraform", "to": "webec2", "label": "creates infra", "variant": "dashed", "route": "orthogonal-v" },
+     { "from": "ansible", "to": "webec2", "label": "Ansible over SSM", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+     { "from": "ansible", "to": "monitoring", "label": "configures monitoring via SSM", "variant": "security", "labelAt": [706, 661] },
+-    { "from": "infisical", "to": "ansible", "label": "AWS IAM auth / secrets", "variant": "security" },
++    { "from": "infisical", "to": "ansible", "label": "supplies runtime secrets", "variant": "security" },
+     { "from": "monitoring", "to": "prometheus", "label": "runs", "variant": "emphasis" },
+     { "from": "prometheus", "to": "webec2", "label": "scrapes metrics", "variant": "dashed", "fromSide": "left", "toSide": "bottom", "labelAt": [785, 434] },
+     { "from": "grafana", "to": "prometheus", "label": "queries", "variant": "emphasis" },
+@@ -46,7 +46,7 @@
+   ],
+   "cards": [
+     { "dot": "cyan", "title": "Public Entry & Edge", "items": ["Cloudflare DNS routes *.hasb.dev; Ruleset Flexible SSL on :80; Zero Trust Tunnel for Grafana", "docs.hasb.dev served via GitHub Pages backed by Cloudflare edge caching"] },
+-    { "dot": "violet", "title": "CI/CD & SSM Operations", "items": ["GitHub Actions uses AWS OIDC to push ECR images and trigger SSM auto-deploys", "Ansible Controller manages nodes over AWS SSM (zero SSH :22); Infisical supplies runtime secrets"] },
++    { "dot": "violet", "title": "CI/CD & SSM Operations", "items": ["GitHub Actions uses AWS OIDC to push ECR images and trigger SSM auto-deploys", "AWS IAM authenticates the controller; Infisical supplies runtime secrets to Ansible"] },
+     { "dot": "emerald", "title": "Observability & Telemetry", "items": ["Prometheus scrapes node and app metrics over VPC private subnet", "Grafana presents code-provisioned dashboards via Cloudflare Zero Trust Tunnel"] }
+   ]
+ }
+diff --git a/docs/assets/final-project-end-state.html b/docs/assets/final-project-end-state.html
+index ae4ced2..942d060 100644
+--- a/docs/assets/final-project-end-state.html
++++ b/docs/assets/final-project-end-state.html
+@@ -5048,7 +5048,7 @@ <h1>DevOps Bootcamp Final Project End State</h1>
+         <path data-edge-from="terraform" data-edge-to="webec2" data-edge-label="creates infra" data-edge-key="6" data-composition-points="405,121;405,245;495,245;495,369" d="M 405 121 L 405 237 Q 405 245 413 245 L 487 245 Q 495 245 495 253 L 495 369" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+         <path data-edge-from="ansible" data-edge-to="webec2" data-edge-label="Ansible over SSM" data-edge-key="7" data-composition-points="585,585;585,561;601,561;601,424;582.5,424;582.5,400" d="M 585 585 L 585 569 Q 585 561 593 561 L 593 561 Q 601 561 601 553 L 601 432 Q 601 424 593 424 L 590.5 424 Q 582.5 424 582.5 416 L 582.5 400" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+         <path data-edge-from="ansible" data-edge-to="monitoring" data-edge-label="configures monitoring via SSM" data-edge-key="8" data-composition-points="670,616;742,616" d="M 670 616 L 742 616" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+-        <path data-edge-from="infisical" data-edge-to="ansible" data-edge-label="AWS IAM auth / secrets" data-edge-key="9" data-composition-points="360,616;500,616" d="M 360 616 L 500 616" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
++        <path data-edge-from="infisical" data-edge-to="ansible" data-edge-label="supplies runtime secrets" data-edge-key="9" data-composition-points="360,616;500,616" d="M 360 616 L 500 616" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+         <path data-edge-from="monitoring" data-edge-to="prometheus" data-edge-label="runs" data-edge-key="10" data-composition-points="897,616;933.5,616;933.5,531;970,531" d="M 897 616 L 925.5 616 Q 933.5 616 933.5 608 L 933.5 539 Q 933.5 531 941.5 531 L 970 531" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+         <path data-edge-from="prometheus" data-edge-to="webec2" data-edge-label="scrapes metrics" data-edge-key="11" data-composition-points="970,531;582.5,531;582.5,400" d="M 970 531 L 590.5 531 Q 582.5 531 582.5 523 L 582.5 400" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+         <path data-edge-from="grafana" data-edge-to="prometheus" data-edge-label="queries" data-edge-key="12" data-composition-points="1042.5,665;1042.5,562" d="M 1042.5 665 L 1042.5 562" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+@@ -5245,9 +5245,9 @@ <h1>DevOps Bootcamp Final Project End State</h1>
+           <rect x="631.4" y="651" width="149.2" height="14" rx="3" class="c-mask"/>
+           <text x="706" y="661" class="t-security" font-size="8" text-anchor="middle">configures monitoring via SSM</text>
+         </g>
+-        <g data-detail="context" data-edge-from="infisical" data-edge-to="ansible" data-edge-label="AWS IAM auth / secrets" data-edge-key="9">
+-          <rect x="372.2" y="596" width="115.6" height="14" rx="3" class="c-mask"/>
+-          <text x="430" y="606" class="t-security" font-size="8" text-anchor="middle">AWS IAM auth / secrets</text>
++        <g data-detail="context" data-edge-from="infisical" data-edge-to="ansible" data-edge-label="supplies runtime secrets" data-edge-key="9">
++          <rect x="367.4" y="596" width="125.19999999999999" height="14" rx="3" class="c-mask"/>
++          <text x="430" y="606" class="t-security" font-size="8" text-anchor="middle">supplies runtime secrets</text>
+         </g>
+         <g data-detail="context" data-edge-from="monitoring" data-edge-to="prometheus" data-edge-label="runs" data-edge-key="10">
+           <rect x="918.5" y="553.5" width="30" height="14" rx="3" class="c-mask"/>
+@@ -5519,7 +5519,7 @@ <h3>CI/CD &amp; SSM Operations</h3>
+         </div>
+         <ul>
+           <li>&bull; GitHub Actions uses AWS OIDC to push ECR images and trigger SSM auto-deploys</li>
+-          <li>&bull; Ansible Controller manages nodes over AWS SSM (zero SSH :22); Infisical supplies runtime secrets</li>
++          <li>&bull; AWS IAM authenticates the controller; Infisical supplies runtime secrets to Ansible</li>
+         </ul>
+       </div>
+ 
+diff --git a/docs/assets/final-project-end-state.visual-check.1440x900.dark.png b/docs/assets/final-project-end-state.visual-check.1440x900.dark.png
+index b4dca3d..9302752 100644
+Binary files a/docs/assets/final-project-end-state.visual-check.1440x900.dark.png and b/docs/assets/final-project-end-state.visual-check.1440x900.dark.png differ
+diff --git a/docs/assets/final-project-end-state.visual-check.1440x900.light.png b/docs/assets/final-project-end-state.visual-check.1440x900.light.png
+index f9b35e7..780d490 100644
+Binary files a/docs/assets/final-project-end-state.visual-check.1440x900.light.png and b/docs/assets/final-project-end-state.visual-check.1440x900.light.png differ
+diff --git a/docs/assets/final-project-end-state.visual-check.2048x1320.dark.png b/docs/assets/final-project-end-state.visual-check.2048x1320.dark.png
+index abed746..7dce6c5 100644
+Binary files a/docs/assets/final-project-end-state.visual-check.2048x1320.dark.png and b/docs/assets/final-project-end-state.visual-check.2048x1320.dark.png differ
+diff --git a/docs/assets/final-project-end-state.visual-check.2048x1320.light.png b/docs/assets/final-project-end-state.visual-check.2048x1320.light.png
+index 03d4bdb..4c1e2a9 100644
+Binary files a/docs/assets/final-project-end-state.visual-check.2048x1320.light.png and b/docs/assets/final-project-end-state.visual-check.2048x1320.light.png differ
+diff --git a/docs/assets/final-project-end-state.visual-check.json b/docs/assets/final-project-end-state.visual-check.json
+index a28d722..1f2c62a 100644
+--- a/docs/assets/final-project-end-state.visual-check.json
++++ b/docs/assets/final-project-end-state.visual-check.json
+@@ -7,8 +7,8 @@
+   "visualReview": "pending",
+   "artifact": {
+     "path": "/Users/has-dev/Documents/Codes/devops-bootcamp-workspace/devops-bootcamp-project/docs/assets/final-project-end-state.html",
+-    "sha256": "97d1933e96965dd8e2319fffc00c4e2df06d7848009fb4414e6f22152c8aa537",
+-    "bytes": 726375
++    "sha256": "04248f5bbf280244536ff9babd09fb258f5a6ef5193d00f8d335c473647920f5",
++    "bytes": 726386
+   },
+   "state": {
+     "detail": "read",
+diff --git a/docs/index.md b/docs/index.md
+index 120dfb4..e1c554c 100644
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -55,9 +55,11 @@ This documentation covers the end-to-end cloud infrastructure, Zero-Trust networ
+     Click the blueprint preview below or [**Launch Full Interactive Canvas →**](assets/final-project-end-state.html){:target="_blank" rel="noopener"} for full-screen pan, zoom, component inspection, and flow tracing generated via Archify.
+ 
+ <div style="margin: 1.25rem 0 2rem; text-align: center;">
+-  <a href="assets/final-project-end-state.html" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease;">
+-    <img class="only-dark" src="assets/final-project-end-state.visual-check.1440x900.dark.png" alt="DevOps Platform End-State Architecture Blueprint" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
+-    <img class="only-light" src="assets/final-project-end-state.visual-check.1440x900.light.png" alt="DevOps Platform End-State Architecture Blueprint" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
++  <a href="assets/final-project-end-state.html" class="only-dark" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease;">
++    <img src="assets/final-project-end-state.visual-check.1440x900.dark.png" alt="DevOps Platform End-State Architecture Blueprint" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
++  </a>
++  <a href="assets/final-project-end-state.html" class="only-light" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease;">
++    <img src="assets/final-project-end-state.visual-check.1440x900.light.png" alt="DevOps Platform End-State Architecture Blueprint" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
+   </a>
+   <div style="margin-top: 1rem;">
+     <a href="assets/final-project-end-state.html" target="_blank" rel="noopener" class="md-button md-button--primary">
+diff --git a/docs/secrets-management.md b/docs/secrets-management.md
+index c88e9ee..23f0059 100644
+--- a/docs/secrets-management.md
++++ b/docs/secrets-management.md
+@@ -18,9 +18,11 @@ Workload identities and operators authenticate through scoped, ephemeral mechani
+     Click the architecture blueprint preview below or <a href="../assets/secrets-management.html" target="_blank" rel="noopener"><strong>Open Interactive Secrets Architecture →</strong></a> for full-screen pan, zoom, component inspection, and flow tracing generated via Archify.
+ 
+ <div style="margin: 1.25rem 0 2rem; text-align: center;">
+-  <a href="../assets/secrets-management.html" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease;">
+-    <img class="only-dark" src="../assets/secrets-management.visual-check.1440x900.dark.png" alt="DevOps Platform Secrets Management Architecture" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
+-    <img class="only-light" src="../assets/secrets-management.visual-check.1440x900.light.png" alt="DevOps Platform Secrets Management Architecture" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
++  <a href="../assets/secrets-management.html" class="only-dark" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease;">
++    <img src="../assets/secrets-management.visual-check.1440x900.dark.png" alt="DevOps Platform Secrets Management Architecture" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
++  </a>
++  <a href="../assets/secrets-management.html" class="only-light" target="_blank" rel="noopener" style="display: block; max-width: 860px; margin: 0 auto; border-radius: 8px; overflow: hidden; border: 1px solid var(--md-default-fg-color--lightest); box-shadow: 0 4px 16px rgba(0,0,0,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease;">
++    <img src="../assets/secrets-management.visual-check.1440x900.light.png" alt="DevOps Platform Secrets Management Architecture" style="width: 100%; max-height: 400px; object-fit: cover; object-position: top center; display: block;" />
+   </a>
+   <div style="margin-top: 1rem;">
+     <a href="../assets/secrets-management.html" target="_blank" rel="noopener" class="md-button md-button--primary">
+diff --git a/docs/stylesheets/extra.css b/docs/stylesheets/extra.css
+index 3e561de..0be5250 100644
+--- a/docs/stylesheets/extra.css
++++ b/docs/stylesheets/extra.css
+@@ -1,8 +1,10 @@
+ /* Theme-aware asset switching without JavaScript */
+-[data-md-color-scheme="default"] .only-dark {
++[data-md-color-scheme="default"] .only-dark,
++body:not([data-md-color-scheme="slate"]) .only-dark {
+   display: none !important;
+ }
+ 
+ [data-md-color-scheme="slate"] .only-light {
+   display: none !important;
+ }
++

@@ -1,0 +1,239 @@
+diff --git a/README.md b/README.md
+index fc13e3a..0c84900 100644
+--- a/README.md
++++ b/README.md
+@@ -45,87 +45,8 @@ Here are the major components of the repository:
+ - **[CI](docs/continuous-integration.md)**: Automated configuration validation and documentation (`terraform-docs`).
+ - **[Bootstrap](pipelines/bootstrap/README.md)**: Contains pipelines that need to be run once per repository fork
+ 
+-## Getting Started
+-### Prerequisites
+-- AWS account with billing enabled
+-- GitHub account
+-- `AdministratorAccess` AWS IAM Policy
+-
+-### Fork the Repository
+-1. Click on the `Use this template` > `Create a new repository` button.
+-2. Under `Repository Name`, choose a name for your repository.
+-
+-### Configuration
+-In your forked repository, change the following Terragrunt configuration files:
+-1. In `pipelines/github.hcl`, modify (by replacing `<YourGitHubUsernameOrOrgName>`, `<the-repository-name-of-your-fork>`):
+-```hcl
+-locals {
+-  github_owner_catalog      = "<YourGitHubUsernameOrOrgName>"
+-  github_repo_name_catalog     = "<the-repository-name-of-your-fork>"
+-  github_repo_name_app_of_apps = "<your-app-of-apps-repo-name>"
+-}
+-```
+-`<the-repository-name-of-your-fork>` should be the same name you chose in the previous section. `<your-app-of-apps-repo-name>` should match your fork of [argocd-app-of-apps-template](https://github.com/ConsciousML/argocd-app-of-apps-template).
+-
+-2. Change `pipelines/region.hcl` to match your desired AWS region
+-
+-3. Set `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_CLIENT_SECRET` in your `.env` (see the [environment variables guide](docs/environment-variables.md))
+-
+-4. Karpenter NodePools cap total vCPUs via `spec.limits.cpu`, set in [`pipelines/dev/eks/stack/terragrunt.stack.hcl`](pipelines/dev/eks/stack/terragrunt.stack.hcl). Raise a limit or switch a pool's `karpenter.sh/capacity-type` requirement to `on-demand` for production stability.
+-
+-### Installation
+-
+-**Option 1: Use mise (recommended)**
+-
+-First, `cd` at the root of this repository. 
+-
+-Next, install mise:
+-```bash
+-curl https://mise.run | MISE_VERSION=v2026.4.0 sh
+-```
+-
+-Then, install all the tools in the `mise.toml` file:
+-```bash
+-mise trust
+-mise install
+-```
+-
+-Finally, run the following to automatically activate mise when starting a shell:
+-- For zsh: 
+-```bash
+-echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc && source ~/.zshrc
+-```
+-- For bash:
+-```bash
+-echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc && source ~/.bashrc
+-```
+-
+-For more information on how to use mise, read their [getting started guide](https://mise.jdx.dev/getting-started.html).
+-
+-
+-**Option 2: Install Tools Manually**
+-- [OpenTofu](https://opentofu.org/docs/intro/install/) (or [Terraform](https://developer.hashicorp.com/terraform/install))
+-- [Terragrunt](https://terragrunt.gruntwork.io/docs/getting-started/install/)
+-- [tflint](https://github.com/terraform-linters/tflint)
+-- [prek](https://github.com/j178/prek#installation)
+-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+-- [GitHub CLI](https://github.com/cli/cli#installation)
+-- [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)
+-- [jq](https://jqlang.org/download/)
+-- [ArgoCD CLI](https://argo-cd.readthedocs.io/en/stable/cli_installation/)
+-- [Slack CLI](https://docs.slack.dev/tools/slack-cli/)
+-- [Cilium CLI](https://github.com/cilium/cilium-cli#installation)
+-- [Hubble CLI](https://github.com/cilium/hubble#installation)
+-
+-See [mise.toml](./mise.toml) and [mise.local.toml](./mise.local.toml) for specific versions.
+-
+-### Authenticate with AWS
+-Authenticate to the AWS CLI:
+-```
+-aws configure
+-```
+-
+-For more information, read the [AWS CLI authentication documentation](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
++## Quickstart
++Read the [Quickstart documentation](https://eks-forge.readthedocs.io/latest/docs/quickstart/).
+ 
+ ### Run the Bootstrap Pipelines
+ Run each pipeline listed in [`pipelines/bootstrap/README.md`](pipelines/bootstrap/README.md) once per repository.
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..cf64424
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,12 @@
++{/* This doc is aggregated into the EKS Forge documentation site: https://eks-forge.readthedocs.io/latest/. It is not meant to be read directly in this repository. */}
++
++### Architecture
++
++The [catalog repository](https://github.com/ConsciousML/terragrunt-template-catalog-eks) contains multiple building blocks that follow a layered architecture where each layer builds upon the previous one:
++1. [Terraform module](https://developer.hashicorp.com/terraform/language/modules): a re-usable component that creates cloud resources.
++2. [Terragrunt unit](https://docs.terragrunt.com/features/units/): a wrapper over a TF module. It defines a single, deployable piece of infrastructure.
++3. [Terragrunt stack](https://docs.terragrunt.com/features/stacks/): a re-usable [DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of units.
++
++In other words, a stack orchestrates multiple units that materialize TF modules.
++The [`modules/`](../modules/), [`units/`](../units/), and [`stacks/`](../stacks/) directories contain these components respectively.
++In the [`pipelines/`](../pipelines/) directory, you'll find all the implemented stacks, also called pipelines.
+diff --git a/docs/configuration.md b/docs/configuration.md
+new file mode 100644
+index 0000000..e6a195a
+--- /dev/null
++++ b/docs/configuration.md
+@@ -0,0 +1,54 @@
++{/* This doc is aggregated into the EKS Forge documentation site: https://eks-forge.readthedocs.io/latest/. It is not meant to be read directly in this repository. */}
++
++# Configuration
++
++## Authenticate with the AWS CLI
++You'll need to authenticate with the AWS CLI to deploy cloud resources with [Terraform](https://developer.hashicorp.com/terraform) (TF).
++The EKS stack provisions resources across many AWS services, so `AdministratorAccess` is the convenient choice here.
++You can scope down to a narrower policy later by reviewing the [units](../units/) this catalog uses.
++
++### Fast Track (admin)
++If you're a root user or admin:
++1. create an [IAM user](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_create.html)
++2. [attach the `AdministratorAccess` policy](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_manage-attach-detach.html) to it
++3. [create an access key](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html) for the user
++4. Authenticate with the AWS CLI using the `AWS Access Key ID` and `AWS Secret Access Key` secret key:
++```bash
++aws configure
++```
++
++:::warning
++The fast track authentication enables you to get started quickly.
++However, long-term credentials are not recommended for production use.
++Instead consider following the [security best practices in IAM documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html).
++:::
++
++### Organization Member
++If you're an organization member, ask your admin to attach the [`AdministratorAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess.html) IAM policy to your identity. Then, authenticate to the CLI using the method recommended by your AWS administrator. More information in the [AWS CLI authentication documentation](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-authentication.html).
++
++## Catalog Configuration
++The catalog is organized into [modules, units, and stacks](../../concepts/#architecture), assembled into deployable pipelines under [`pipelines/`](../pipelines/).
++
++These pipelines are modular. They read `.hcl` configuration files that you need to modify:
++1. In [`pipelines/github.hcl`](../pipelines/github.hcl), modify the following variables:
++```hcl
++locals {
++  github_owner_catalog      = "<YourGitHubUsernameOrOrgName>"           # Example: ConsciousML
++  github_repo_name_catalog  = "<the-repository-name-of-your-fork>"   # Example: eks-forge-catalog
++}
++```
++Where:
++- `<the-repository-name-of-your-fork>` should be the name you chose when [you forked the catalog](../../quickstart/installation#fork-the-eks-forge-catalog)
++- `<github_owner_catalog>` is the GitHub username or organization name where your fork lives 
++
++This change points all the `terraform { source = <url>}` to your fork instead of the official EKS Forge catalog.
++In other words, you'll be able to modify the modules and units yourself going forward.
++
++2. Change `pipelines/region.hcl` to match your desired AWS region and Availability Zones (AZs):
++```hcl
++locals {
++  region = "us-east-1"
++  azs    = ["us-east-1a", "us-east-1b", "us-east-1c"]
++}
++```
++You can also leave it as is if you plan to use `us-east-1`.
+\ No newline at end of file
+diff --git a/docs/installation.md b/docs/installation.md
+new file mode 100644
+index 0000000..5436cdd
+--- /dev/null
++++ b/docs/installation.md
+@@ -0,0 +1,59 @@
++{/* This doc is aggregated into the EKS Forge documentation site: https://eks-forge.readthedocs.io/latest/. It is not meant to be read directly in this repository. */}
++
++# Installation
++
++## Fork the EKS Forge Catalog 
++EKS Forge is a toolkit containing multiple [repository templates](../../concepts/), each with their own responsibilities.
++They're meant to be forked and extended.
++
++To get started, you'll fork the catalog, a collection of [Terraform](https://developer.hashicorp.com/terraform) modules and [Terragrunt](https://docs.terragrunt.com/getting-started/terminology/#terragrunt) pipelines, re-usable across multiple environments (`dev`, `staging`, and `prod`):
++
++### Private Fork
++For creating a private repository, go to the [catalog home page](https://github.com/ConsciousML/terragrunt-template-catalog-eks) and:
++1. click on `Use this template` in the top-right corner.
++2. select `Create a new repository`
++3. choose a repository name
++4. under `Configuration`, click to the drop down next to `Choose visibility` and click on `Private`
++5. click on `Create repository`
++
++### Public Fork
++For creating a public repository, go to the [catalog home page](https://github.com/ConsciousML/terragrunt-template-catalog-eks) and:
++1. click on the `Fork` button
++2. change the repository name if needed
++3. click on `Create fork`
++
++## Install the CLI Tools
++Clone your fork, and `cd` at the root of the repository.
++
++You'll use multiple CLI tools to deploy and operate EKS Forge.
++Luckily, the catalog comes with a [mise-en-place](https://mise.jdx.dev/) configuration that allows you to install them all effortlessly.
++
++Let's start by installing `mise`:
++```bash
++curl https://mise.run | MISE_VERSION=v2026.4.0 sh
++```
++
++All the tools are pinned to a specific version in [`mise.toml`](../mise.toml) and [`mise.local.toml`](../mise.local.toml) files.
++Run the following command to install them all at once:
++```bash
++mise trust
++mise install
++```
++
++Finally, run the following to automatically activate mise when starting a shell:
++- For `zsh`: 
++```bash
++echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc && source ~/.zshrc
++```
++- For `bash`:
++```bash
++echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc && source ~/.bashrc
++```
++
++For a different shell type, use the [`mise activate` reference](https://mise.jdx.dev/cli/activate.html).
++
++:::warning
++`mise` installed tools are not available system-wise by default.
++You'll need to be inside your repository directory to have them loaded in your context.
++More information in the [mise shims documentation](https://mise.jdx.dev/dev-tools/shims.html)
++:::
+\ No newline at end of file

@@ -1,0 +1,39 @@
+diff --git a/modules/ionos-pg-cluster/main.tf b/modules/ionos-pg-cluster/main.tf
+index 9859e05..044e420 100644
+--- a/modules/ionos-pg-cluster/main.tf
++++ b/modules/ionos-pg-cluster/main.tf
+@@ -34,6 +34,10 @@ resource "ionoscloud_pg_cluster_v2" "pg_cluster" {
+     time            = format("%02d:00:00", var.maintenance_hour)
+     day_of_the_week = var.maintenance_day
+   }
++
++  lifecycle {
++    prevent_destroy = var.prevent_destroy
++  }
+ }
+ 
+ removed {
+diff --git a/modules/ionos-pg-cluster/variables.tf b/modules/ionos-pg-cluster/variables.tf
+index 010b6a2..27b948c 100644
+--- a/modules/ionos-pg-cluster/variables.tf
++++ b/modules/ionos-pg-cluster/variables.tf
+@@ -22,11 +22,6 @@ variable "volume_size" {
+   description = "The amount of storage per instance in MB."
+   type        = number
+ }
+-variable "volume_disk_type" {
+-  description = "The storage type used in your cluster. (Default: SSD)"
+-  type        = string
+-  default     = "SSD"
+-}
+ variable "datacenter_id" {
+   description = "The datacenter to connect your cluster to."
+   type        = string
+@@ -95,3 +90,7 @@ variable "password_version" {
+   type        = string
+   default     = "1"
+ }
++variable "prevent_destroy" {
++  type        = bool
++  default     = true
++}

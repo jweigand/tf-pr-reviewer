@@ -1,0 +1,73 @@
+# Live ingest: poll the GitHub Search API -> filter -> pr.candidates.
+#
+# Opt-in. Requires GITHUB_TOKEN: this sends an Authorization header unconditionally,
+# so an empty token is a 401 rather than a silent fall back to anonymous access.
+# Enable with INGEST_MODE=live in .env.
+#
+# Everything after the input is identical to ingest-replay.yaml, and the filter is the
+# same imported file, so replay is a faithful rehearsal of this path.
+
+input:
+  # generate + http rather than the http_client input, so the poll interval is one
+  # obvious line instead of an emergent property of how fast requests complete.
+  generate:
+    interval: ${POLL_INTERVAL:-60s}
+    mapping: 'root = {}'
+  processors:
+    - http:
+        # advanced_search=true is required; GitHub is retiring the legacy issue search.
+        # is:open matters: sorting by updated also returns closed PRs.
+        url: https://api.github.com/search/issues?q=is:pr+is:open+language:HCL&sort=updated&order=desc&per_page=100&advanced_search=true
+        verb: GET
+        headers:
+          Accept: application/vnd.github+json
+          X-GitHub-Api-Version: "2022-11-28"
+          # GitHub rejects requests with an empty User-Agent.
+          User-Agent: tf-pr-reviewer
+          Authorization: Bearer ${GITHUB_TOKEN:?set GITHUB_TOKEN in .env for live mode}
+        rate_limit: github_search
+
+pipeline:
+  processors:
+    - mapping: 'root = this.items'
+    - unarchive:
+        format: json_array
+
+    - mapping: |
+        import "/connect/resources/filter.blobl"
+        root = this.apply("filter_and_project")
+
+    # Loose dedupe, so a poll that returns the same PR twice does not re-review it.
+    # Keyed on updated_at rather than the head SHA because search results carry no SHA.
+    # A comment bumps updated_at, so this still lets a commentary-only change through;
+    # the service does the real dedupe on the head SHA after it fetches the PR detail.
+    - dedupe:
+        cache: seen_prs
+        key: '${! json("search_id") }-${! json("pr_updated_at") }'
+
+cache_resources:
+  # In-process, so it does not survive a restart: the next poll after one republishes
+  # everything in the current window. Measured, not theoretical. That is tolerable here
+  # only because the service dedupes on the head SHA before spending a model call
+  # (service/reviewer/seen.py), which is the real safety net. A durable cache would be the first thing to change for a
+  # deployment where Connect restarts are routine.
+  - label: seen_prs
+    memory:
+      default_ttl: 24h
+
+rate_limit_resources:
+  # The search endpoint allows 30 requests per minute, separate from the 5000 per hour
+  # core limit. This caps well under that so a restart loop cannot exhaust it.
+  - label: github_search
+    local:
+      count: 10
+      interval: 1m
+
+output:
+  kafka_franz:
+    seed_brokers: [ redpanda:9092 ]
+    topic: pr.candidates
+    key: '${! json("repo") }#${! json("pr_number") }'
+
+logger:
+  level: INFO

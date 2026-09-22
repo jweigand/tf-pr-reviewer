@@ -1,0 +1,484 @@
+diff --git a/main.tf b/main.tf
+index ea665e1..22f7ce5 100644
+--- a/main.tf
++++ b/main.tf
+@@ -28,20 +28,24 @@ provider "google" {
+   project = var.project
+ }
+ 
+-# Init VPC network for Liquor instances.
+-module "liquor_network" {
++# Init VPC network for the Delivery server instances.
++module "delivery_network" {
+   source = "./modules/network"
+ 
+   project = var.project
+   regions = tolist([
+     var.region
+   ])
+-  vpc_name               = "liquor"
+-  allow_ingres_tcp_ports = local.adminPort != null ? [local.adminPort] : [8080]
++  vpc_name = "delivery"
++  # The Admin server port is opened only when the Admin server is enabled.
++  allow_ingres_tcp_ports = local.adminEnabled ? [coalesce(local.adminPort, 8080)] : []
+ }
+ 
+ locals {
+-  adminPort = try(nonsensitive(var.admin.port), null)
++  # The `admin` input is sensitive because of the password. Its `enabled` flag and `port`
++  # decide which firewall rules exist, and Terraform requires such values to be non-sensitive.
++  adminEnabled = nonsensitive(var.admin.enabled)
++  adminPort    = try(nonsensitive(var.admin.port), null)
+   adminSettings = [
+     { name = "ADMIN_SERVER", value = var.admin.enabled },
+     { name = "ADMIN_USERNAME", value = var.admin.login },
+@@ -57,24 +61,39 @@ module "instance_template" {
+ 
+   project             = var.project
+   region              = var.region
+-  network             = module.liquor_network.network
+-  subnetwork          = module.liquor_network.subnets[var.region]
++  network             = module.delivery_network.network
++  subnetwork          = module.delivery_network.subnets[var.region]
+   container           = var.container
+   machine_type        = var.vm_machine_type
+   env                 = concat(var.env, local.adminEnv)
+   additional_metadata = var.metadata
+ }
+ 
+-resource "google_compute_instance_from_template" "liquor-server" {
+-  name = "liquor-server"
++resource "google_compute_instance_from_template" "delivery-server" {
++  name = "delivery-server"
+   zone = var.zone
+ 
+   source_instance_template = module.instance_template.template.self_link
+ 
+   network_interface {
+-    subnetwork = module.liquor_network.subnets[var.region]
++    subnetwork = module.delivery_network.subnets[var.region]
+     access_config {
+       nat_ip = var.vm_address
+     }
+   }
+ }
++
++# Deployments created with the `SpineEventEngine/spine-liquor/google` module keep their
++# state mapped to the renamed addresses when they switch to this module. The VM and
++# the network are still replaced, because their names changed, but Terraform then
++# orders the replacement so that the old VM releases the static address before
++# the new one claims it.
++moved {
++  from = module.liquor_network
++  to   = module.delivery_network
++}
++
++moved {
++  from = google_compute_instance_from_template.liquor-server
++  to   = google_compute_instance_from_template.delivery-server
++}
+diff --git a/modules/instance-template/main.tf b/modules/instance-template/main.tf
+index 50bd8b4..e0b5ded 100644
+--- a/modules/instance-template/main.tf
++++ b/modules/instance-template/main.tf
+@@ -26,27 +26,35 @@
+ 
+ locals {
+   container_image_project = var.image_project != "" ? var.image_project : var.project
++
++  # The registry host of the container image, for example `europe-docker.pkg.dev`.
++  container_registry = split("/", var.container)[0]
++
++  # The registry host when it is a Google one, Artifact Registry or Container Registry,
++  # so that the startup script configures the Docker credential helper for it.
++  # Empty for images hosted elsewhere.
++  google_registry = can(regex("(^|\\.)(pkg\\.dev|gcr\\.io)$", local.container_registry)) ? local.container_registry : ""
+ }
+ 
+ data "google_compute_default_service_account" "default" {
+   # The default service account of GCE instances
+ }
+ 
+-# Generates Instance Template for Liquor Server VMs.
++# Generates Instance Template for the Delivery server VMs.
+ #
+ # For details about all inputs, see the module docs:
+ # https://registry.terraform.io/modules/terraform-google-modules/vm/google/latest/submodules/instance_template
+ module "vm_instance_template" {
+   source  = "terraform-google-modules/vm/google//modules/instance_template"
+-  version = "~> 7.1"
++  version = "~> 15.2"
+ 
+   project_id          = var.project
+   region              = var.region
+-  name_prefix         = "liquor-${var.region}"
++  name_prefix         = "delivery-${var.region}"
+   preemptible         = false
+   on_host_maintenance = "MIGRATE"
+-  service_account     = {
+-    email  = data.google_compute_default_service_account.default.email
++  service_account = {
++    email = data.google_compute_default_service_account.default.email
+     scopes = [
+       "https://www.googleapis.com/auth/cloud-platform"
+     ]
+@@ -59,17 +67,18 @@ module "vm_instance_template" {
+   disk_size_gb         = 20
+   source_image_project = local.container_image_project
+   source_image_family  = var.image_family
+-  metadata             = merge(var.additional_metadata, tomap({
++  metadata = merge(var.additional_metadata, tomap({
+     "google-logging-enabled" = "true"
+   }))
+-  startup_script       = templatefile("${path.module}/startup.sh.tftpl", {
+-    container_name  = "liquor-server"
++  startup_script = templatefile("${path.module}/startup.sh.tftpl", {
++    container_name  = "delivery-server"
+     container_image = var.container
++    google_registry = local.google_registry
+     environment     = var.env
+   })
+ 
+   # See https://cloud.google.com/security/shielded-cloud/shielded-vm for details.
+-  enable_shielded_vm       = true
++  enable_shielded_vm = true
+   shielded_instance_config = {
+     "enable_integrity_monitoring" : true,
+     # Enabling this option causes failures during the application start.
+diff --git a/modules/instance-template/outputs.tf b/modules/instance-template/outputs.tf
+index 03eb839..b07f8c7 100644
+--- a/modules/instance-template/outputs.tf
++++ b/modules/instance-template/outputs.tf
+@@ -25,6 +25,6 @@
+ #
+ 
+ output "template" {
+-  description = "The Liquor server instance template."
++  description = "The Delivery server instance template."
+   value       = module.vm_instance_template
+ }
+diff --git a/modules/instance-template/variables.tf b/modules/instance-template/variables.tf
+index 9d75a03..e7efaaf 100644
+--- a/modules/instance-template/variables.tf
++++ b/modules/instance-template/variables.tf
+@@ -61,7 +61,7 @@ variable "additional_metadata" {
+   default     = {}
+ }
+ 
+-variable image_project {
++variable "image_project" {
+   description = "The project of the GCE image."
+   type        = string
+   default     = "cos-cloud"
+diff --git a/modules/instance-template/versions.tf b/modules/instance-template/versions.tf
+index 579d916..968f5cc 100644
+--- a/modules/instance-template/versions.tf
++++ b/modules/instance-template/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # The `terraform-google-modules` modules used inside require Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }
+diff --git a/modules/network/main.tf b/modules/network/main.tf
+index 097a778..bea113a 100644
+--- a/modules/network/main.tf
++++ b/modules/network/main.tf
+@@ -37,7 +37,7 @@ locals {
+   region_list = tolist(var.regions)
+ 
+   # An object mapping GCP regions
+-  region_to_subnet_name = {for region in var.regions : region => "${var.vpc_name}-${region}"}
++  region_to_subnet_name = { for region in var.regions : region => "${var.vpc_name}-${region}" }
+ 
+   # The list of subnets in a VPC network. The subnet is represented as an object accepted by
+   # "terraform-google-network" module. See the form of a subnet input
+@@ -48,11 +48,11 @@ locals {
+   # to calculate a subnet address within given IP network address prefix of VPC. The index of a GCP region in
+   # a list of `local.region_list` is used as a subnet number.
+   subnets = toset([
+-  for i, region in local.region_list : {
+-    subnet_name   = local.region_to_subnet_name[region]
+-    subnet_ip     = cidrsubnet(var.cidrsubnet_ip_range, var.cidrsubnet_new_bits, i)
+-    subnet_region = region
+-  }
++    for i, region in local.region_list : {
++      subnet_name   = local.region_to_subnet_name[region]
++      subnet_ip     = cidrsubnet(var.cidrsubnet_ip_range, var.cidrsubnet_new_bits, i)
++      subnet_region = region
++    }
+   ])
+ }
+ 
+@@ -62,7 +62,7 @@ locals {
+ # of this module for details.
+ module "vpc" {
+   source  = "terraform-google-modules/network/google"
+-  version = "~> 3.4"
++  version = "~> 18.2"
+ 
+   project_id   = var.project
+   network_name = var.vpc_name
+@@ -73,73 +73,51 @@ module "vpc" {
+ 
+ # Generates a set of firewall rules for the custom VPC.
+ #
+-# See <a href="https://github.com/terraform-google-modules/terraform-google-network/tree/v3.4.0/modules/firewall-rules">docs</a>
++# See <a href="https://github.com/terraform-google-modules/terraform-google-network/tree/v18.2.0/modules/firewall-rules">docs</a>
+ # of this module for details.
+ module "firewall_rules" {
+   source       = "terraform-google-modules/network/google//modules/firewall-rules"
+-  version      = "~> 3.4"
++  version      = "~> 18.2"
+   project_id   = var.project
+   network_name = module.vpc.network_name
+ 
+-  rules = concat( [
++  # The rule names are derived from `var.vpc_name` rather than from the module output above:
++  # the output is unknown until the network is created, and Terraform needs the rule names,
++  # which key the firewall resources, to be known at plan time.
++  ingress_rules = concat([
+     {
+-      name                    = "${module.vpc.network_name}-allow-ssh-ingress"
+-      description             = "Allow SSH from anywhere."
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = ["0.0.0.0/0"]
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = null
+-      target_service_accounts = null
+-      allow                   = [
++      name          = "${var.vpc_name}-allow-ssh-ingress"
++      description   = "Allow SSH from anywhere."
++      source_ranges = ["0.0.0.0/0"]
++      allow = [
+         {
+           protocol = "tcp"
+           ports    = ["22"]
+         }
+       ]
+-      deny       = []
+-      log_config = null
+     },
+     {
+-      name                    = "${module.vpc.network_name}-allow-grpc"
+-      description             = "Allow gRPC ingress."
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = null
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = ["grpc"]
+-      target_service_accounts = null
+-      allow                   = [
++      name        = "${var.vpc_name}-allow-grpc"
++      description = "Allow gRPC ingress."
++      target_tags = ["grpc"]
++      allow = [
+         {
+           protocol = "tcp"
+           ports    = ["8484"]
+         }
+       ]
+-      deny       = []
+-      log_config = null
+-    }
+-  ], length(var.allow_ingres_tcp_ports) > 0 ?
+-  [
+-    {
+-      name                    = "${module.vpc.network_name}-allow-custom"
+-      description             = "Allow custom"
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = null
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = null
+-      target_service_accounts = null
+-      allow                   = [
+-        {
+-          protocol = "tcp"
+-          ports    = var.allow_ingres_tcp_ports
+-        }
+-      ]
+-      deny       = []
+-      log_config = null
+     }
++    ], length(var.allow_ingres_tcp_ports) > 0 ?
++    [
++      {
++        name        = "${var.vpc_name}-allow-custom"
++        description = "Allow custom"
++        allow = [
++          {
++            protocol = "tcp"
++            ports    = var.allow_ingres_tcp_ports
++          }
++        ]
++      }
+   ] : [])
+ }
+diff --git a/modules/network/versions.tf b/modules/network/versions.tf
+index 579d916..968f5cc 100644
+--- a/modules/network/versions.tf
++++ b/modules/network/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # The `terraform-google-modules` modules used inside require Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }
+diff --git a/outputs.tf b/outputs.tf
+index d778608..77833b5 100644
+--- a/outputs.tf
++++ b/outputs.tf
+@@ -24,12 +24,12 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #
+ 
+-output "liquor" {
+-  description = "The name of the created Liquor VM."
+-  value       = google_compute_instance_from_template.liquor-server.name
++output "server" {
++  description = "The name of the created Delivery server VM."
++  value       = google_compute_instance_from_template.delivery-server.name
+ }
+ 
+ output "network" {
+-  description = "A network created for the Liquor instances."
+-  value       = module.liquor_network
++  description = "The network created for the Delivery server."
++  value       = module.delivery_network
+ }
+diff --git a/variables.tf b/variables.tf
+index bd6b218..81585e5 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -25,22 +25,22 @@
+ #
+ 
+ variable "project" {
+-  description = "The ID of Google Cloud Project where the Liquor will be deployed."
++  description = "The ID of the Google Cloud project where the Delivery server will be deployed."
+   type        = string
+ }
+ 
+ variable "region" {
+-  description = "The GCP region of an Liquor instance group zone."
++  description = "The GCP region to place the Delivery server resources in."
+   type        = string
+ }
+ 
+ variable "zone" {
+-  description = "The GCP zone where instance group must be placed."
++  description = "The GCP zone where the Delivery server VM must be placed."
+   type        = string
+ }
+ 
+ variable "container" {
+-  description = "The GCE container image FQN to be used by the Liquor instances."
++  description = "The full name of the Delivery server container image to run on the VM."
+   type        = string
+ }
+ 
+@@ -50,18 +50,18 @@ variable "vm_address" {
+ }
+ 
+ variable "vm_machine_type" {
+-  description = "The GCE VM machine type to be used for the Liquor instances."
++  description = "The GCE VM machine type to be used for the Delivery server."
+   type        = string
+   default     = "e2-highcpu-2"
+ }
+ 
+ variable "env" {
+   description = <<EOT
+-    Environment variables to set for the Liquor server.
++    Environment variables to set for the Delivery server.
+ 
+-    Please pay attention that the effect will depend on the particular image used.
+-    As an example the `MAX_INBOUND_MESSAGE_SIZE` and `SHARD_PROCESSING_TIMEOUT` are only accepted by
+-    the `simple-server` implementation and will not affect the behaviour of the `server`.
++    The variables the server reads, such as `MAX_INBOUND_MESSAGE_SIZE`, `SHARD_PROCESSING_TIMEOUT`,
++    `USE_REDIS`, and `REDIS_HOST`, are described in the server documentation:
++    https://github.com/SpineEventEngine/delivery/blob/master/server/README.md
+   EOT
+   type        = list(object({ name = string, value = string }))
+   default     = []
+@@ -75,12 +75,12 @@ variable "metadata" {
+ 
+ variable "admin" {
+   description = <<EOT
+-    Configuration for the Admin Server of the Liquor image.
++    Configuration for the Admin Server of the Delivery server image.
+     The guide on how to provide sensitive data to the template and avoid passing it to the VCS:
+     https://developer.hashicorp.com/terraform/tutorials/configuration-language/sensitive-variables#set-values-with-a-tfvars-file
+   EOT
+   sensitive   = true
+-  type        = object({
++  type = object({
+     enabled  = bool
+     port     = optional(number)
+     login    = optional(string)
+diff --git a/versions.tf b/versions.tf
+index 579d916..f979ec9 100644
+--- a/versions.tf
++++ b/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # `optional()` object attributes, used by the `admin` input, need Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }

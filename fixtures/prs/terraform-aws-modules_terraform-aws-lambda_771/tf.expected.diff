@@ -1,0 +1,49 @@
+diff --git a/iam.tf b/iam.tf
+index 8b0440e1..f25d27a9 100644
+--- a/iam.tf
++++ b/iam.tf
+@@ -52,6 +52,15 @@ data "aws_iam_policy_document" "assume_role" {
+         identifiers = principals.value.identifiers
+       }
+     }
++
++    dynamic "condition" {
++      for_each = var.assume_role_conditions
++      content {
++        test     = condition.value.test
++        variable = condition.value.variable
++        values   = condition.value.values
++      }
++    }
+   }
+ 
+   dynamic "statement" {
+diff --git a/variables.tf b/variables.tf
+index 6b94188d..48be26af 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -628,6 +628,12 @@ variable "trusted_entities" {
+   default     = []
+ }
+ 
++variable "assume_role_conditions" {
++  description = "List of conditions applied to the trusted-entities statement of the Lambda Function role (trust relationship). Useful for confused-deputy prevention, e.g. `aws:SourceAccount`"
++  type        = any
++  default     = []
++}
++
+ variable "assume_role_policy_statements" {
+   description = "Map of dynamic policy statements for assuming Lambda Function role (trust relationship)"
+   type        = any
+diff --git a/wrappers/main.tf b/wrappers/main.tf
+index 6fb981d7..efb1d826 100644
+--- a/wrappers/main.tf
++++ b/wrappers/main.tf
+@@ -6,6 +6,7 @@ module "wrapper" {
+   allowed_triggers                             = try(each.value.allowed_triggers, var.defaults.allowed_triggers, {})
+   architectures                                = try(each.value.architectures, var.defaults.architectures, null)
+   artifacts_dir                                = try(each.value.artifacts_dir, var.defaults.artifacts_dir, "builds")
++  assume_role_conditions                       = try(each.value.assume_role_conditions, var.defaults.assume_role_conditions, [])
+   assume_role_policy_statements                = try(each.value.assume_role_policy_statements, var.defaults.assume_role_policy_statements, {})
+   attach_async_event_policy                    = try(each.value.attach_async_event_policy, var.defaults.attach_async_event_policy, false)
+   attach_cloudwatch_logs_policy                = try(each.value.attach_cloudwatch_logs_policy, var.defaults.attach_cloudwatch_logs_policy, true)

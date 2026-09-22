@@ -1,0 +1,370 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ca4156a8..1560495a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ Extending the adopted spec, each change should have a link to its corresponding pull request appended.
+ 
++## [Unreleased]
++
++### Features
++
++* **core_project_factory:** add `tags` variable to apply resource manager tags atomically at project creation, satisfying GOVERN_TAGS custom org policy `requireTag*` constraints ([#1040](https://github.com/terraform-google-modules/terraform-google-project-factory/pull/1040))
++
+ ## [18.3.0](https://github.com/terraform-google-modules/terraform-google-project-factory/compare/v18.2.0...v18.3.0) (2026-06-05)
+ 
+ 
+diff --git a/README.md b/README.md
+index 31745d50..e6eecb3d 100644
+--- a/README.md
++++ b/README.md
+@@ -163,6 +163,7 @@ determining that location is as follows:
+ | shared\_vpc\_subnets | List of subnets fully qualified subnet IDs (ie. projects/$project\_id/regions/$region/subnetworks/$subnet\_id) | `list(string)` | `[]` | no |
+ | svpc\_host\_project\_id | The ID of the host project which hosts the shared VPC | `string` | `""` | no |
+ | tag\_binding\_values | Tag values to bind the project to. | `list(string)` | `[]` | no |
++| tags | Resource manager tags to apply to the project AT CREATION TIME (atomic). Map of tagKeys/\<id\> (or \<parent\>/\<key\_short\>) to tagValues/\<id\> (or \<key\>/\<value\_short\>). Satisfies GOVERN\_TAGS custom org policy constraints (e.g. requireTag\*) that check for tags at project creation. NOTE: this field is create-only in the provider — changing it after creation forces project replacement. For mutable, post-creation tags use tag\_binding\_values instead. | `map(string)` | `{}` | no |
+ | universe\_prefix | The universe short name prefix to prepend to the project ID (e.g., 'eu0'). A colon (:) is automatically appended to the project ID, and a hyphen (-) is used for the state bucket name. | `string` | `""` | no |
+ | usage\_bucket\_name | Name of a GCS bucket to store GCE usage reports in (optional) | `string` | `""` | no |
+ | usage\_bucket\_prefix | Prefix in the GCS bucket to store GCE usage reports in (optional) | `string` | `""` | no |
+diff --git a/examples/tags_project/README.md b/examples/tags_project/README.md
+index cd395369..81639910 100644
+--- a/examples/tags_project/README.md
++++ b/examples/tags_project/README.md
+@@ -1,6 +1,12 @@
+ # Project with tags
+ 
+-This example illustrates how to create a project with a tag binding.
++This example illustrates two ways to attach resource manager tags to a project:
++
++- **`tags`** — applied atomically at project creation via `google_project.tags`. Use this
++  when GOVERN\_TAGS org policies enforce `requireTag*` constraints that check for tags at
++  creation time. **Create-only**: changing this map forces project replacement.
++- **`tag_binding_values`** — applied post-creation via `google_tags_tag_binding`. Mutable;
++  safe to add or remove without replacing the project.
+ 
+ <!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+ ## Inputs
+@@ -10,7 +16,8 @@ This example illustrates how to create a project with a tag binding.
+ | billing\_account | The ID of the billing account to associate this project with | `any` | n/a | yes |
+ | folder\_id | The ID of a folder to host this project. | `string` | `null` | no |
+ | organization\_id | The organization id for the associated services | `string` | `"684124036889"` | no |
+-| tag\_value | value | `string` | n/a | yes |
++| project\_tags | Resource manager tags to apply atomically at project creation. Map of tagKeys/\<id\> (or \<parent\>/\<key\_short\>) to tagValues/\<id\> (or \<key\>/\<value\_short\>). Required when GOVERN\_TAGS org policies enforce requireTag\* constraints at creation time. | `map(string)` | `{}` | no |
++| tag\_value | Tag value ID (numeric part of tagValues/\<id\>) to bind post-creation via google\_tags\_tag\_binding. | `string` | n/a | yes |
+ 
+ ## Outputs
+ 
+diff --git a/examples/tags_project/main.tf b/examples/tags_project/main.tf
+index c545c3aa..f64fdb12 100644
+--- a/examples/tags_project/main.tf
++++ b/examples/tags_project/main.tf
+@@ -14,6 +14,17 @@
+  * limitations under the License.
+  */
+ 
++# Demonstrates both tag attachment strategies:
++#
++#   tags              — applied atomically at project creation via google_project.tags.
++#                       Required when GOVERN_TAGS org policies enforce requireTag* constraints.
++#                       Create-only: changing this map forces project replacement.
++#
++#   tag_binding_values — applied post-creation via google_tags_tag_binding.
++#                        Mutable; safe to add/remove without replacing the project.
++#
++# Use `tags` for tags mandated at creation time; use `tag_binding_values` for all others.
++
+ module "project-factory" {
+   source  = "terraform-google-modules/project-factory/google"
+   version = "~> 18.0"
+@@ -24,7 +35,12 @@ module "project-factory" {
+   folder_id               = var.folder_id
+   billing_account         = var.billing_account
+   default_service_account = "deprivilege"
+-  tag_binding_values      = [var.tag_value]
++
++  # Tags applied atomically at project creation — satisfies GOVERN_TAGS requireTag* org policies.
++  tags = var.project_tags
++
++  # Tags bound after creation — mutable, does not force project replacement.
++  tag_binding_values = [var.tag_value]
+ 
+   deletion_policy = "DELETE"
+ }
+diff --git a/examples/tags_project/variables.tf b/examples/tags_project/variables.tf
+index 60939f3e..cf31e14b 100644
+--- a/examples/tags_project/variables.tf
++++ b/examples/tags_project/variables.tf
+@@ -30,6 +30,12 @@ variable "billing_account" {
+ }
+ 
+ variable "tag_value" {
+-  description = "value"
++  description = "Tag value ID (numeric part of tagValues/<id>) to bind post-creation via google_tags_tag_binding."
+   type        = string
+ }
++
++variable "project_tags" {
++  description = "Resource manager tags to apply atomically at project creation. Map of tagKeys/<id> (or <parent>/<key_short>) to tagValues/<id> (or <key>/<value_short>). Required when GOVERN_TAGS org policies enforce requireTag* constraints at creation time."
++  type        = map(string)
++  default     = {}
++}
+diff --git a/main.tf b/main.tf
+index a9f2ea6d..54ea778e 100644
+--- a/main.tf
++++ b/main.tf
+@@ -72,6 +72,7 @@ module "project-factory" {
+   vpc_service_control_sleep_duration = var.vpc_service_control_sleep_duration
+   default_network_tier               = var.default_network_tier
+   tag_binding_values                 = var.tag_binding_values
++  tags                               = var.tags
+   cloud_armor_tier                   = var.cloud_armor_tier
+   deletion_policy                    = var.deletion_policy
+ }
+diff --git a/modules/core_project_factory/README.md b/modules/core_project_factory/README.md
+new file mode 100644
+index 00000000..7791e818
+--- /dev/null
++++ b/modules/core_project_factory/README.md
+@@ -0,0 +1,98 @@
++# Core Project Factory
++
++This module is the core of the [project-factory](../../README.md) module. It creates a
++Google Cloud project and configures it according to the provided inputs.
++
++## Usage
++
++See the [root module](../../README.md) for full usage. Direct usage of this submodule is
++intended for advanced cases only.
++
++```hcl
++module "core_project_factory" {
++  source = "terraform-google-modules/project-factory/google//modules/core_project_factory"
++
++  name            = "my-project"
++  org_id          = "1234567890"
++  billing_account = "ABCD-1234-ABCD-1234"
++
++  enable_shared_vpc_service_project = false
++}
++```
++
++<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
++## Inputs
++
++| Name | Description | Type | Default | Required |
++|------|-------------|------|---------|:--------:|
++| activate\_api\_identities | The list of service identities (Google Managed service account for the API) to force-create for the project (e.g. in order to grant additional roles).<br>    APIs in this list will automatically be appended to `activate_apis`. Use for services supported by `gcloud beta services identity create`<br>    Not including the API in this list will follow the default behaviour for identity creation (which is usually when the first resource using the API is created).<br>    Any roles (e.g. service agent role) must be explicitly listed. See https://cloud.google.com/iam/docs/understanding-roles#service-agent-roles-roles for a list of related roles. | <pre>list(object({<br>    api   = string<br>    roles = list(string)<br>  }))</pre> | `[]` | no |
++| activate\_apis | The list of apis to activate within the project | `list(string)` | <pre>[<br>  "compute.googleapis.com"<br>]</pre> | no |
++| auto\_create\_network | Create the default network | `bool` | `false` | no |
++| billing\_account | The ID of the billing account to associate this project with | `string` | n/a | yes |
++| bucket\_force\_destroy | Force the deletion of all objects within the GCS bucket when deleting the bucket (optional) | `bool` | `false` | no |
++| bucket\_labels | A map of key/value label pairs to assign to the bucket (optional) | `map(string)` | `{}` | no |
++| bucket\_location | The location for a GCS bucket to create (optional) | `string` | `"US"` | no |
++| bucket\_name | A name for a GCS bucket to create (in the bucket\_project project), useful for Terraform state (optional) | `string` | `""` | no |
++| bucket\_pap | Enable Public Access Prevention. Possible values are "enforced" or "inherited". | `string` | `"inherited"` | no |
++| bucket\_project | A project to create a GCS bucket (bucket\_name) in, useful for Terraform state (optional) | `string` | `""` | no |
++| bucket\_ula | Enable Uniform Bucket Level Access | `bool` | `true` | no |
++| bucket\_versioning | Enable versioning for a GCS bucket to create (optional) | `bool` | `false` | no |
++| cloud\_armor\_tier | Managed protection tier to be set. Possible values are: CA\_STANDARD, CA\_ENTERPRISE\_PAYGO | `string` | `null` | no |
++| create\_project\_sa | Whether the default service account for the project shall be created | `bool` | `true` | no |
++| default\_network\_tier | Default Network Service Tier for resources created in this project. If unset, the value will not be modified. See https://cloud.google.com/network-tiers/docs/using-network-service-tiers and https://cloud.google.com/network-tiers. | `string` | `""` | no |
++| default\_service\_account | Project default service account setting: can be one of `delete`, `deprivilege`, `disable`, or `keep`. | `string` | `"disable"` | no |
++| deletion\_policy | The deletion policy for the project. | `string` | `"PREVENT"` | no |
++| disable\_dependent\_services | Whether services that are enabled and which depend on this service should also be disabled when this service is destroyed. | `bool` | `true` | no |
++| disable\_services\_on\_destroy | Whether project services will be disabled when the resources are destroyed | `bool` | `true` | no |
++| enable\_shared\_vpc\_host\_project | If this project is a shared VPC host project. If true, you must *not* set shared\_vpc variable. Default is false. | `bool` | `false` | no |
++| enable\_shared\_vpc\_service\_project | If this project should be attached to a shared VPC. If true, you must set shared\_vpc variable. | `bool` | n/a | yes |
++| folder\_id | The ID of a folder to host this project | `string` | `""` | no |
++| grant\_network\_role | Whether or not to grant networkUser role on the host project/subnets | `bool` | `true` | no |
++| group\_email | The identifier of the group to control the project by being assigned group\_role. This can be a standard Google Group email address or a principalSet URI (e.g., 'principalSet://...'). The module automatically applies the 'group:' prefix to standard emails. | `string` | `""` | no |
++| group\_role | The role to give the controlling group (group\_name) over the project. | `string` | `""` | no |
++| labels | Map of labels for project | `map(string)` | `{}` | no |
++| lien | Add a lien on the project to prevent accidental deletion | `bool` | `false` | no |
++| manage\_group | A toggle to indicate if a G Suite group should be managed. | `bool` | `false` | no |
++| name | The name for the project | `string` | n/a | yes |
++| org\_id | The organization ID. | `string` | `null` | no |
++| project\_id | The ID to give the project. If not provided, the `name` will be used. | `string` | `""` | no |
++| project\_sa\_description | Description to set for the project default service account. | `string` | `null` | no |
++| project\_sa\_name | Default service account name for the project. | `string` | `"project-service-account"` | no |
++| random\_project\_id | Adds a suffix of 4 random characters to the `project_id`. | `bool` | `false` | no |
++| random\_project\_id\_length | Sets the length of `random_project_id` to the provided length, and uses a `random_string` for a larger collusion domain.  Recommended for use with CI. | `number` | `null` | no |
++| sa\_role | A role to give the default Service Account for the project (defaults to none) | `string` | `""` | no |
++| shared\_vpc | The ID of the host project which hosts the shared VPC | `string` | `""` | no |
++| shared\_vpc\_subnets | List of subnets fully qualified subnet IDs (ie. projects/$project\_id/regions/$region/subnetworks/$subnet\_id) | `list(string)` | `[]` | no |
++| tag\_binding\_values | Tag values to bind the project to. | `list(string)` | `[]` | no |
++| tags | Resource manager tags to apply to the project AT CREATION TIME (atomic). Map of tagKeys/\<id\> (or \<parent\>/\<key\_short\>) to tagValues/\<id\> (or \<key\>/\<value\_short\>). Satisfies GOVERN\_TAGS custom org policy constraints (e.g. requireTag\*) that check for tags at project creation. NOTE: this field is create-only in the provider — changing it after creation forces project replacement. For mutable, post-creation tags use tag\_binding\_values instead. | `map(string)` | `{}` | no |
++| universe\_prefix | The universe short name prefix to prepend to the project ID (e.g., 'eu0'). A colon (:) is automatically appended to the project ID, and a hyphen (-) is used for the state bucket name. | `string` | `""` | no |
++| usage\_bucket\_name | Name of a GCS bucket to store GCE usage reports in (optional) | `string` | `""` | no |
++| usage\_bucket\_prefix | Prefix in the GCS bucket to store GCE usage reports in (optional) | `string` | `""` | no |
++| vpc\_service\_control\_attach\_dry\_run | Whether the project will be attached to a VPC Service Control Perimeter in Dry Run Mode. vpc\_service\_control\_attach\_enabled should be false for this to be true | `bool` | `false` | no |
++| vpc\_service\_control\_attach\_enabled | Whether the project will be attached to a VPC Service Control Perimeter in ENFORCED MODE. vpc\_service\_control\_attach\_dry\_run should be false for this to be true | `bool` | `false` | no |
++| vpc\_service\_control\_perimeter\_name | The name of a VPC Service Control Perimeter to add the created project to | `string` | `null` | no |
++| vpc\_service\_control\_sleep\_duration | The duration to sleep in seconds before adding the project to a shared VPC after the project is added to the VPC Service Control Perimeter. VPC-SC is eventually consistent. | `string` | `"5s"` | no |
++
++## Outputs
++
++| Name | Description |
++|------|-------------|
++| api\_s\_account | API service account email |
++| api\_s\_account\_fmt | API service account email formatted for terraform use |
++| enabled\_api\_identities | Enabled API identities in the project |
++| enabled\_apis | Enabled APIs in the project |
++| project\_bucket\_name | The name of the project's bucket |
++| project\_bucket\_self\_link | Project's bucket selfLink |
++| project\_bucket\_url | Project's bucket url |
++| project\_id | ID of the project |
++| project\_name | Name of the project |
++| project\_number | Numeric identifier for the project |
++| service\_account\_display\_name | The display name of the default service account |
++| service\_account\_email | The email of the default service account |
++| service\_account\_id | The id of the default service account |
++| service\_account\_name | The fully-qualified name of the default service account |
++| service\_account\_unique\_id | The unique id of the default service account |
++| tag\_bindings | Tag bindings |
++| usage\_report\_export\_bucket | GCE usage reports bucket |
++
++<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+diff --git a/modules/core_project_factory/main.tf b/modules/core_project_factory/main.tf
+index 055005ef..d0c8dc93 100644
+--- a/modules/core_project_factory/main.tf
++++ b/modules/core_project_factory/main.tf
+@@ -99,10 +99,12 @@ resource "google_project" "main" {
+   deletion_policy     = var.deletion_policy
+ 
+   labels = var.labels
++  tags   = var.tags
+ 
+   lifecycle {
+     ignore_changes = [
+       labels["firebase"],
++      tags,
+     ]
+   }
+ }
+diff --git a/modules/core_project_factory/variables.tf b/modules/core_project_factory/variables.tf
+index af96c4a1..7e6b0992 100644
+--- a/modules/core_project_factory/variables.tf
++++ b/modules/core_project_factory/variables.tf
+@@ -288,6 +288,12 @@ variable "tag_binding_values" {
+   default     = []
+ }
+ 
++variable "tags" {
++  description = "Resource manager tags to apply to the project AT CREATION TIME (atomic). Map of tagKeys/<id> (or <parent>/<key_short>) to tagValues/<id> (or <key>/<value_short>). Satisfies GOVERN_TAGS custom org policy constraints (e.g. requireTag*) that check for tags at project creation. NOTE: this field is create-only in the provider — changing it after creation forces project replacement. For mutable, post-creation tags use tag_binding_values instead."
++  type        = map(string)
++  default     = {}
++}
++
+ variable "cloud_armor_tier" {
+   description = "Managed protection tier to be set. Possible values are: CA_STANDARD, CA_ENTERPRISE_PAYGO"
+   type        = string
+diff --git a/test/integration/tags_project/tags_project_test.go b/test/integration/tags_project/tags_project_test.go
+index d752dfa1..5ee68bbb 100644
+--- a/test/integration/tags_project/tags_project_test.go
++++ b/test/integration/tags_project/tags_project_test.go
+@@ -25,19 +25,44 @@ import (
+ )
+ 
+ func TestTagsProject(t *testing.T) {
+-	tagsProjectT := tft.NewTFBlueprintTest(t)
++	// Read setup outputs first so we can construct the project_tags map,
++	// which is a map(string) and cannot be auto-mapped from setup string outputs.
++	setup := tft.NewTFBlueprintTest(t, tft.WithTFDir("../../test/setup"))
++	tagInlineKey := setup.GetStringOutput("tag_inline_key")
++	tagInlineValue := setup.GetStringOutput("tag_inline_value")
++
++	tagsProjectT := tft.NewTFBlueprintTest(t,
++		tft.WithVars(map[string]interface{}{
++			// project_tags applies resource manager tags atomically at project creation
++			// via google_project.tags, satisfying GOVERN_TAGS requireTag* org policies.
++			// Uses a separate tag key from tag_binding_values to avoid key conflicts.
++			"project_tags": map[string]string{
++				tagInlineKey: tagInlineValue,
++			},
++		}),
++	)
++
+ 	tagsProjectT.DefineVerify(func(assert *assert.Assertions) {
+ 		tagsProjectT.DefaultVerify(assert)
+ 
+ 		projectNum := tagsProjectT.GetStringOutput("project_num")
++
++		// tag_value is the numeric ID used by tag_binding_values (post-creation binding).
+ 		tagValue := tagsProjectT.GetTFSetupStringOutput("tag_value")
+ 
+ 		parent := fmt.Sprintf("//cloudresourcemanager.googleapis.com/projects/%s", projectNum)
+ 		projBindings := gcloud.Runf(t, "resource-manager tags bindings list --parent=%s", parent).Array()
+-		assert.Len(projBindings, 1, "expected one binding")
+ 
+-		binding := utils.GetFirstMatchResult(t, projBindings, "parent", parent)
+-		assert.Equalf(fmt.Sprintf("tagValues/%s", tagValue), binding.Get("tagValue").String(), "expected binding to %s", tagValue)
++		// Expect two bindings: one from tag_binding_values (post-creation), one from tags (inline at creation).
++		assert.Len(projBindings, 2, "expected two tag bindings: one post-creation via tag_binding_values, one inline via google_project.tags")
++
++		// Verify the post-creation binding created by tag_binding_values.
++		postBinding := utils.GetFirstMatchResult(t, projBindings, "tagValue", fmt.Sprintf("tagValues/%s", tagValue))
++		assert.NotNilf(postBinding, "expected post-creation binding to tagValues/%s", tagValue)
++
++		// Verify the inline binding created by google_project.tags at creation time.
++		inlineBinding := utils.GetFirstMatchResult(t, projBindings, "tagValue", tagInlineValue)
++		assert.NotNilf(inlineBinding, "expected inline binding to %s (created atomically at project creation)", tagInlineValue)
+ 	})
+ 	tagsProjectT.Test()
+ }
+diff --git a/test/setup/outputs.tf b/test/setup/outputs.tf
+index 87a32b6b..d9d50350 100644
+--- a/test/setup/outputs.tf
++++ b/test/setup/outputs.tf
+@@ -62,3 +62,11 @@ output "service_account_email" {
+ output "tag_value" {
+   value = google_tags_tag_value.value.name
+ }
++
++output "tag_inline_key" {
++  value = google_tags_tag_key.inline_key.name
++}
++
++output "tag_inline_value" {
++  value = google_tags_tag_value.inline_value.name
++}
+diff --git a/test/setup/tags.tf b/test/setup/tags.tf
+index e206cbb7..ab6a2b14 100644
+--- a/test/setup/tags.tf
++++ b/test/setup/tags.tf
+@@ -31,3 +31,18 @@ resource "google_tags_tag_value" "value" {
+   short_name  = "sample-val"
+   description = "Sample val"
+ }
++
++# Separate key for testing inline tags (google_project.tags).
++# A resource can only have one value per tag key, so inline tags and
++# tag_binding_values must use different keys to avoid conflicts.
++resource "google_tags_tag_key" "inline_key" {
++  parent      = "organizations/${var.org_id}"
++  short_name  = "pf-inline-key-${random_string.key_suffix.result}"
++  description = "Tag key for inline tags test"
++}
++
++resource "google_tags_tag_value" "inline_value" {
++  parent      = "tagKeys/${google_tags_tag_key.inline_key.name}"
++  short_name  = "inline-val"
++  description = "Tag value for inline tags test"
++}
+diff --git a/variables.tf b/variables.tf
+index 18065de2..ffe68c0c 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -388,6 +388,12 @@ variable "tag_binding_values" {
+   default     = []
+ }
+ 
++variable "tags" {
++  description = "Resource manager tags to apply to the project AT CREATION TIME (atomic). Map of tagKeys/<id> (or <parent>/<key_short>) to tagValues/<id> (or <key>/<value_short>). Satisfies GOVERN_TAGS custom org policy constraints (e.g. requireTag*) that check for tags at project creation. NOTE: this field is create-only in the provider — changing it after creation forces project replacement. For mutable, post-creation tags use tag_binding_values instead."
++  type        = map(string)
++  default     = {}
++}
++
+ variable "cloud_armor_tier" {
+   description = "Managed protection tier to be set. Possible values are: CA_STANDARD, CA_ENTERPRISE_PAYGO"
+   type        = string

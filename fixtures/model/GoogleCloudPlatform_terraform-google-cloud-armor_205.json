@@ -1,0 +1,47 @@
+{
+  "repo": "GoogleCloudPlatform/terraform-google-cloud-armor",
+  "pr_number": 205,
+  "model": "qwen3.5:9b",
+  "model_seconds": 38.7,
+  "done_reason": "stop",
+  "retried": false,
+  "prompt_tokens": 2806,
+  "impact": {
+    "findings": [],
+    "dismissed": [
+      {
+        "item": "Potential ordering change",
+        "reason": "The PR description explicitly notes that existing configurations may see a one-time reorder, which is a documented side effect rather than a breaking disruption."
+      }
+    ],
+    "confidence": "high",
+    "summary": "The diff only modifies internal `for_each` logic to allow duplicate keys and updates examples; no resources, modules, or interfaces are removed or renamed, so there is no breaking impact."
+  },
+  "security": {
+    "findings": [],
+    "dismissed": [
+      {
+        "item": "Network exposure",
+        "reason": "The diff only modifies Terraform resource definitions for security policies and does not introduce new ingress rules or change existing network exposure settings."
+      },
+      {
+        "item": "IAM/Role grants",
+        "reason": "The diff contains no IAM resource definitions or role grants."
+      },
+      {
+        "item": "Encryption",
+        "reason": "The diff does not modify encryption settings or disable encryption."
+      },
+      {
+        "item": "Secrets/Passwords",
+        "reason": "The diff does not introduce any literal secrets or passwords."
+      },
+      {
+        "item": "Logging/Auditing",
+        "reason": "The diff does not modify logging or auditing configurations."
+      }
+    ],
+    "confidence": "high",
+    "summary": "No security issues found in the provided diff."
+  }
+}

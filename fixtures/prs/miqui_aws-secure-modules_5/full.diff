@@ -1,0 +1,815 @@
+diff --git a/.github/workflows/validate.yml b/.github/workflows/validate.yml
+index ff3b49c..01b00fd 100644
+--- a/.github/workflows/validate.yml
++++ b/.github/workflows/validate.yml
+@@ -14,7 +14,7 @@ jobs:
+       - uses: actions/checkout@v4
+       - uses: open-policy-agent/setup-opa@v2
+         with:
+-          version: latest
++          version: v1.4.2
+       - name: opa test policies/
+         run: opa test policies/ -v
+ 
+@@ -82,6 +82,10 @@ jobs:
+       - name: Warn when policy checks are skipped
+         if: steps.plan.outcome != 'success'
+         run: |
++          if [ -n "${{ vars.AWS_ROLE_ARN }}" ]; then
++            echo "::error::terraform plan failed even though AWS OIDC credentials (AWS_ROLE_ARN) are configured for this repo. This is a real failure, not a missing-credentials situation."
++            exit 1
++          fi
+           echo "::warning::terraform plan could not be produced (no real AWS credentials configured for this repo)."
+           echo "::warning::Policy checks (conftest) are skipped this run. Once the AWS_ROLE_ARN repository variable is configured for GitHub OIDC, terraform plan will succeed and policy enforcement will activate automatically."
+ 
+diff --git a/policies/lib/util.rego b/policies/lib/util.rego
+index ca8fdb6..12c0308 100644
+--- a/policies/lib/util.rego
++++ b/policies/lib/util.rego
+@@ -7,34 +7,51 @@ import rego.v1
+ 
+ # All resources with a known "after" value (created or updated, not destroyed).
+ known_changes contains rc if {
+-  some rc in input.resource_changes
+-  rc.change.after != null
++	some rc in input.resource_changes
++	rc.change.after != null
+ }
+ 
+ # Resources of a given type with a known after-state.
+ resources_of_type(t) := [rc |
+-  some rc in known_changes
+-  rc.type == t
++	some rc in known_changes
++	rc.type == t
+ ]
+ 
+ # Value of an attribute on the first resource of type t; null if absent.
+ first_attr(t, attr) := v if {
+-  rs := resources_of_type(t)
+-  count(rs) > 0
+-  v := object.get(rs[0].change.after, attr, null)
++	rs := resources_of_type(t)
++	count(rs) > 0
++	v := object.get(rs[0].change.after, attr, null)
+ } else := null if {
+-  count(resources_of_type(t)) == 0
+-  v := null
++	count(resources_of_type(t)) == 0
++	v := null
+ }
+ 
+ # True if at least one resource of type t exists in the plan.
+ has_type(t) if count(resources_of_type(t)) > 0
+ 
++# True if the given attribute is unknown at plan time: its value in "after"
++# is null AND terraform flagged it as unknown in "after_unknown". Distinguish
++# this from a known missing/empty value (null/absent without the flag), which
++# should still be treated as a policy violation.
++is_unknown(attr, after, after_unknown) if {
++	object.get(after, attr, null) == null
++	object.get(after_unknown, attr, false) == true
++}
++
+ # Helper for tests: construct a minimal plan input.
+ mock_plan(resources) := {"resource_changes": resources}
+ 
+ mock_resource(type_, name, after) := {
+-  "type": type_,
+-  "name": name,
+-  "change": {"actions": ["create"], "after": after},
++	"type": type_,
++	"name": name,
++	"change": {"actions": ["create"], "after": after},
++}
++
++# Same as mock_resource, but also carries an after_unknown map so tests can
++# simulate plan-time unknown values (computed attributes not yet resolved).
++mock_resource_unknown(type_, name, after, after_unknown) := {
++	"type": type_,
++	"name": name,
++	"change": {"actions": ["create"], "after": after, "after_unknown": after_unknown},
+ }
+diff --git a/policies/s3/s3.rego b/policies/s3/s3.rego
+index c410773..cbbe341 100644
+--- a/policies/s3/s3.rego
++++ b/policies/s3/s3.rego
+@@ -6,63 +6,66 @@ import rego.v1
+ import data.util
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_public_access_block")
+-  some flag in ["block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"]
+-  object.get(r.change.after, flag, false) != true
+-  msg := sprintf("S3 %s: Block Public Access flag '%s' must be true", [r.name, flag])
++	some r in util.resources_of_type("aws_s3_bucket_public_access_block")
++	some flag in ["block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"]
++	object.get(r.change.after, flag, false) != true
++	msg := sprintf("S3 %s: Block Public Access flag '%s' must be true", [r.name, flag])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_server_side_encryption_configuration")
+-  rule := r.change.after.rule
+-  enc := object.get(rule, "apply_server_side_encryption_by_default", {})
+-  object.get(enc, "sse_algorithm", "") != "aws:kms"
+-  msg := sprintf("S3 %s: encryption must be SSE-KMS (aws:kms)", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_server_side_encryption_configuration")
++	rule := r.change.after.rule
++	enc := object.get(rule, "apply_server_side_encryption_by_default", {})
++	object.get(enc, "sse_algorithm", "") != "aws:kms"
++	msg := sprintf("S3 %s: encryption must be SSE-KMS (aws:kms)", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_server_side_encryption_configuration")
+-  object.get(r.change.after.rule, "bucket_key_enabled", false) != true
+-  msg := sprintf("S3 %s: bucket_key_enabled must be true", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_server_side_encryption_configuration")
++	object.get(r.change.after.rule, "bucket_key_enabled", false) != true
++	msg := sprintf("S3 %s: bucket_key_enabled must be true", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_versioning")
+-  object.get(r.change.after.versioning_configuration, "status", "") != "Enabled"
+-  msg := sprintf("S3 %s: versioning must be Enabled", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_versioning")
++	object.get(r.change.after.versioning_configuration, "status", "") != "Enabled"
++	msg := sprintf("S3 %s: versioning must be Enabled", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_ownership_controls")
+-  object.get(r.change.after.rule, "object_ownership", "") != "BucketOwnerEnforced"
+-  msg := sprintf("S3 %s: object_ownership must be BucketOwnerEnforced (ACLs disabled)", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_ownership_controls")
++	object.get(r.change.after.rule, "object_ownership", "") != "BucketOwnerEnforced"
++	msg := sprintf("S3 %s: object_ownership must be BucketOwnerEnforced (ACLs disabled)", [r.name])
+ }
+ 
+ # Any bucket in the plan must be accompanied by a TLS-only policy resource.
+ deny contains msg if {
+-  util.has_type("aws_s3_bucket")
+-  not util.has_type("aws_s3_bucket_policy")
+-  msg := "every aws_s3_bucket must have a bucket policy (TLS-only enforcement)"
++	util.has_type("aws_s3_bucket")
++	not util.has_type("aws_s3_bucket_policy")
++	msg := "every aws_s3_bucket must have a bucket policy (TLS-only enforcement)"
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_policy")
+-  doc := r.change.after.policy
+-  not tls_deny_statement_present(doc)
+-  msg := sprintf("S3 %s: bucket policy must deny s3:* when aws:SecureTransport is false", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_policy")
++	doc := r.change.after.policy
++	not tls_deny_statement_present(doc)
++	msg := sprintf("S3 %s: bucket policy must deny s3:* when aws:SecureTransport is false", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_s3_bucket_public_access_block")
+-  object.get(r.change.after, "bucket", null) == null
+-  msg := sprintf("S3 %s: public access block must reference a bucket", [r.name])
++	some r in util.resources_of_type("aws_s3_bucket_public_access_block")
++	after := r.change.after
++	after_unknown := object.get(r.change, "after_unknown", {})
++	not util.is_unknown("bucket", after, after_unknown)
++	object.get(after, "bucket", null) == null
++	msg := sprintf("S3 %s: public access block must reference a bucket", [r.name])
+ }
+ 
+ # A policy document (JSON string) denies insecure transport.
+ tls_deny_statement_present(doc) if {
+-  is_string(doc)
+-  policy := json.unmarshal(doc)
+-  some st in policy.Statement
+-  st.Effect == "Deny"
+-  object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
++	is_string(doc)
++	policy := json.unmarshal(doc)
++	some st in policy.Statement
++	st.Effect == "Deny"
++	object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
+ }
+diff --git a/policies/s3/s3_test.rego b/policies/s3/s3_test.rego
+index 5909a76..ec6d46b 100644
+--- a/policies/s3/s3_test.rego
++++ b/policies/s3/s3_test.rego
+@@ -7,98 +7,132 @@ import data.policies.s3
+ import data.util
+ 
+ test_compliant_s3_plan if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_s3_bucket", "b", {"bucket": "x"}),
+-    util.mock_resource("aws_s3_bucket_public_access_block", "pab", {
+-      "bucket": "x",
+-      "block_public_acls": true,
+-      "block_public_policy": true,
+-      "ignore_public_acls": true,
+-      "restrict_public_buckets": true,
+-    }),
+-    util.mock_resource("aws_s3_bucket_ownership_controls", "oc", {
+-      "rule": {"object_ownership": "BucketOwnerEnforced"},
+-    }),
+-    util.mock_resource("aws_s3_bucket_versioning", "v", {
+-      "versioning_configuration": {"status": "Enabled"},
+-    }),
+-    util.mock_resource("aws_s3_bucket_server_side_encryption_configuration", "sse", {
+-      "rule": {
+-        "bucket_key_enabled": true,
+-        "apply_server_side_encryption_by_default": {
+-          "sse_algorithm": "aws:kms",
+-          "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
+-        },
+-      },
+-    }),
+-    util.mock_resource("aws_s3_bucket_policy", "pol", {
+-      "policy": json.marshal({
+-        "Version": "2012-10-17",
+-        "Statement": [{
+-          "Sid": "DenyInsecureTransport",
+-          "Effect": "Deny",
+-          "Principal": "*",
+-          "Action": "s3:*",
+-          "Resource": ["arn:aws:s3:::x", "arn:aws:s3:::x/*"],
+-          "Condition": {"Bool": {"aws:SecureTransport": "false"}},
+-        }],
+-      }),
+-    }),
+-  ])
+-
+-  denies := s3.deny with input as plan
+-  count(denies) == 0
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket", "b", {"bucket": "x"}),
++		util.mock_resource("aws_s3_bucket_public_access_block", "pab", {
++			"bucket": "x",
++			"block_public_acls": true,
++			"block_public_policy": true,
++			"ignore_public_acls": true,
++			"restrict_public_buckets": true,
++		}),
++		util.mock_resource("aws_s3_bucket_ownership_controls", "oc", {
++			"rule": {"object_ownership": "BucketOwnerEnforced"},
++		}),
++		util.mock_resource("aws_s3_bucket_versioning", "v", {
++			"versioning_configuration": {"status": "Enabled"},
++		}),
++		util.mock_resource("aws_s3_bucket_server_side_encryption_configuration", "sse", {
++			"rule": {
++				"bucket_key_enabled": true,
++				"apply_server_side_encryption_by_default": {
++					"sse_algorithm": "aws:kms",
++					"kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
++				},
++			},
++		}),
++		util.mock_resource("aws_s3_bucket_policy", "pol", {
++			"policy": json.marshal({
++				"Version": "2012-10-17",
++				"Statement": [{
++					"Sid": "DenyInsecureTransport",
++					"Effect": "Deny",
++					"Principal": "*",
++					"Action": "s3:*",
++					"Resource": ["arn:aws:s3:::x", "arn:aws:s3:::x/*"],
++					"Condition": {"Bool": {"aws:SecureTransport": "false"}},
++				}],
++			}),
++		}),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) == 0
+ }
+ 
+ # ── Public access block missing a flag ────────────────────────────────────────
+ test_pab_flag_false_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_s3_bucket_public_access_block", "pab", {
+-      "bucket": "x",
+-      "block_public_acls": true,
+-      "block_public_policy": true,
+-      "ignore_public_acls": true,
+-      "restrict_public_buckets": false,
+-    }),
+-  ])
+-
+-  denies := s3.deny with input as plan
+-  count(denies) == 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket_public_access_block", "pab", {
++			"bucket": "x",
++			"block_public_acls": true,
++			"block_public_policy": true,
++			"ignore_public_acls": true,
++			"restrict_public_buckets": false,
++		}),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) == 1
+ }
+ 
+ # ── Non-KMS encryption denied ─────────────────────────────────────────────────
+ test_non_kms_encryption_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_s3_bucket_server_side_encryption_configuration", "sse", {
+-      "rule": {
+-        "bucket_key_enabled": true,
+-        "apply_server_side_encryption_by_default": {"sse_algorithm": "AES256"},
+-      },
+-    }),
+-  ])
+-
+-  denies := s3.deny with input as plan
+-  count(denies) == 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket_server_side_encryption_configuration", "sse", {
++			"rule": {
++				"bucket_key_enabled": true,
++				"apply_server_side_encryption_by_default": {"sse_algorithm": "AES256"},
++			},
++		}),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) == 1
+ }
+ 
+ # ── Versioning disabled denied ────────────────────────────────────────────────
+ test_versioning_disabled_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_s3_bucket_versioning", "v", {
+-      "versioning_configuration": {"status": "Suspended"},
+-    }),
+-  ])
+-
+-  denies := s3.deny with input as plan
+-  count(denies) == 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket_versioning", "v", {
++			"versioning_configuration": {"status": "Suspended"},
++		}),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) == 1
++}
++
++# ── Public access block bucket unknown at plan time: not denied ──────────────
++test_pab_bucket_unknown_not_denied if {
++	plan := util.mock_plan([
++		util.mock_resource_unknown(
++			"aws_s3_bucket_public_access_block", "pab", {
++				"bucket": null,
++				"block_public_acls": true,
++				"block_public_policy": true,
++				"ignore_public_acls": true,
++				"restrict_public_buckets": true,
++			},
++			{"bucket": true},
++		),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) == 0
++}
++
++# ── Public access block bucket known-missing (no unknown flag): denied ───────
++test_pab_bucket_known_missing_denied if {
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket_public_access_block", "pab", {
++			"block_public_acls": true,
++			"block_public_policy": true,
++			"ignore_public_acls": true,
++			"restrict_public_buckets": true,
++		}),
++	])
++
++	denies := s3.deny with input as plan
++	count(denies) >= 1
+ }
+ 
+ # ── Bucket without policy denied ──────────────────────────────────────────────
+ test_bucket_without_policy_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_s3_bucket", "b", {"bucket": "x"}),
+-  ])
++	plan := util.mock_plan([
++		util.mock_resource("aws_s3_bucket", "b", {"bucket": "x"}),
++	])
+ 
+-  denies := s3.deny with input as plan
+-  count(denies) >= 1
++	denies := s3.deny with input as plan
++	count(denies) >= 1
+ }
+diff --git a/policies/sns/sns.rego b/policies/sns/sns.rego
+index f5f7c97..1d2d0e5 100644
+--- a/policies/sns/sns.rego
++++ b/policies/sns/sns.rego
+@@ -6,35 +6,41 @@ import rego.v1
+ import data.util
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sns_topic")
+-  object.get(r.change.after, "kms_master_key_id", null) == null
+-  msg := sprintf("SNS %s: encryption required (kms_master_key_id must be set)", [r.name])
++	some r in util.resources_of_type("aws_sns_topic")
++	after := r.change.after
++	after_unknown := object.get(r.change, "after_unknown", {})
++	not util.is_unknown("kms_master_key_id", after, after_unknown)
++	object.get(after, "kms_master_key_id", null) == null
++	msg := sprintf("SNS %s: encryption required (kms_master_key_id must be set)", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sns_topic")
+-  not startswith(object.get(r.change.after, "kms_master_key_id", ""), "arn:aws:kms:")
+-  msg := sprintf("SNS %s: kms_master_key_id must be a customer-managed KMS key ARN", [r.name])
++	some r in util.resources_of_type("aws_sns_topic")
++	after := r.change.after
++	after_unknown := object.get(r.change, "after_unknown", {})
++	not util.is_unknown("kms_master_key_id", after, after_unknown)
++	not startswith(object.get(after, "kms_master_key_id", ""), "arn:aws:kms:")
++	msg := sprintf("SNS %s: kms_master_key_id must be a customer-managed KMS key ARN", [r.name])
+ }
+ 
+ # Any topic in the plan must be accompanied by a TLS-only topic policy.
+ deny contains msg if {
+-  util.has_type("aws_sns_topic")
+-  not util.has_type("aws_sns_topic_policy")
+-  msg := "every aws_sns_topic must have a topic policy (TLS-only enforcement)"
++	util.has_type("aws_sns_topic")
++	not util.has_type("aws_sns_topic_policy")
++	msg := "every aws_sns_topic must have a topic policy (TLS-only enforcement)"
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sns_topic_policy")
+-  doc := r.change.after.policy
+-  not tls_deny_statement_present(doc)
+-  msg := sprintf("SNS %s: topic policy must deny sns:* when aws:SecureTransport is false", [r.name])
++	some r in util.resources_of_type("aws_sns_topic_policy")
++	doc := r.change.after.policy
++	not tls_deny_statement_present(doc)
++	msg := sprintf("SNS %s: topic policy must deny sns:* when aws:SecureTransport is false", [r.name])
+ }
+ 
+ tls_deny_statement_present(doc) if {
+-  is_string(doc)
+-  policy := json.unmarshal(doc)
+-  some st in policy.Statement
+-  st.Effect == "Deny"
+-  object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
++	is_string(doc)
++	policy := json.unmarshal(doc)
++	some st in policy.Statement
++	st.Effect == "Deny"
++	object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
+ }
+diff --git a/policies/sns/sns_test.rego b/policies/sns/sns_test.rego
+index 049ea96..e0825cb 100644
+--- a/policies/sns/sns_test.rego
++++ b/policies/sns/sns_test.rego
+@@ -7,47 +7,96 @@ import data.policies.sns
+ import data.util
+ 
+ test_compliant_sns_plan if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sns_topic", "t", {
+-      "name": "t",
+-      "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
+-    }),
+-    util.mock_resource("aws_sns_topic_policy", "p", {
+-      "policy": json.marshal({
+-        "Version": "2012-10-17",
+-        "Statement": [{
+-          "Sid": "DenyInsecureTransport",
+-          "Effect": "Deny",
+-          "Principal": "*",
+-          "Action": "sns:*",
+-          "Resource": "arn:aws:sns:us-east-1:123456789012:t",
+-          "Condition": {"Bool": {"aws:SecureTransport": "false"}},
+-        }],
+-      }),
+-    }),
+-  ])
+-
+-  denies := sns.deny with input as plan
+-  count(denies) == 0
++	plan := util.mock_plan([
++		util.mock_resource("aws_sns_topic", "t", {
++			"name": "t",
++			"kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
++		}),
++		util.mock_resource("aws_sns_topic_policy", "p", {
++			"policy": json.marshal({
++				"Version": "2012-10-17",
++				"Statement": [{
++					"Sid": "DenyInsecureTransport",
++					"Effect": "Deny",
++					"Principal": "*",
++					"Action": "sns:*",
++					"Resource": "arn:aws:sns:us-east-1:123456789012:t",
++					"Condition": {"Bool": {"aws:SecureTransport": "false"}},
++				}],
++			}),
++		}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) == 0
+ }
+ 
+ test_unencrypted_topic_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sns_topic", "t", {"name": "t"}),
+-  ])
++	plan := util.mock_plan([
++		util.mock_resource("aws_sns_topic", "t", {"name": "t"}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) >= 1
++}
+ 
+-  denies := sns.deny with input as plan
+-  count(denies) >= 1
++test_kms_unset_unknown_not_denied if {
++	plan := util.mock_plan([
++		util.mock_resource_unknown(
++			"aws_sns_topic", "t", {
++				"name": "t",
++				"kms_master_key_id": null,
++			},
++			{"kms_master_key_id": true},
++		),
++		util.mock_resource("aws_sns_topic_policy", "p", {
++			"policy": json.marshal({
++				"Version": "2012-10-17",
++				"Statement": [{
++					"Sid": "DenyInsecureTransport",
++					"Effect": "Deny",
++					"Principal": "*",
++					"Action": "sns:*",
++					"Resource": "arn:aws:sns:us-east-1:123456789012:t",
++					"Condition": {"Bool": {"aws:SecureTransport": "false"}},
++				}],
++			}),
++		}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) == 0
++}
++
++test_kms_known_missing_denied if {
++	plan := util.mock_plan([
++		util.mock_resource("aws_sns_topic", "t", {"name": "t"}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) >= 1
++}
++
++test_kms_known_bad_denied if {
++	plan := util.mock_plan([
++		util.mock_resource("aws_sns_topic", "t", {
++			"name": "t",
++			"kms_master_key_id": "not-an-arn",
++		}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) >= 1
+ }
+ 
+ test_topic_without_policy_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sns_topic", "t", {
+-      "name": "t",
+-      "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
+-    }),
+-  ])
+-
+-  denies := sns.deny with input as plan
+-  count(denies) >= 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_sns_topic", "t", {
++			"name": "t",
++			"kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
++		}),
++	])
++
++	denies := sns.deny with input as plan
++	count(denies) >= 1
+ }
+diff --git a/policies/sqs/sqs.rego b/policies/sqs/sqs.rego
+index 54df63a..4f15ab6 100644
+--- a/policies/sqs/sqs.rego
++++ b/policies/sqs/sqs.rego
+@@ -6,37 +6,40 @@ import rego.v1
+ import data.util
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sqs_queue")
+-  after := r.change.after
+-  object.get(after, "sqs_managed_sse_enabled", true) == true
+-  object.get(after, "kms_master_key_id", null) == null
+-  msg := sprintf("SQS %s: encryption required (set kms_master_key_id or sqs_managed_sse_enabled)", [r.name])
++	some r in util.resources_of_type("aws_sqs_queue")
++	after := r.change.after
++	object.get(after, "sqs_managed_sse_enabled", true) == true
++	object.get(after, "kms_master_key_id", null) == null
++	msg := sprintf("SQS %s: encryption required (set kms_master_key_id or sqs_managed_sse_enabled)", [r.name])
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sqs_queue")
+-  not startswith(object.get(r.change.after, "kms_master_key_id", ""), "arn:aws:kms:")
+-  msg := sprintf("SQS %s: kms_master_key_id must be a customer-managed KMS key ARN", [r.name])
++	some r in util.resources_of_type("aws_sqs_queue")
++	after := r.change.after
++	after_unknown := object.get(r.change, "after_unknown", {})
++	not util.is_unknown("kms_master_key_id", after, after_unknown)
++	not startswith(object.get(after, "kms_master_key_id", ""), "arn:aws:kms:")
++	msg := sprintf("SQS %s: kms_master_key_id must be a customer-managed KMS key ARN", [r.name])
+ }
+ 
+ # Any queue in the plan must be accompanied by a TLS-only queue policy.
+ deny contains msg if {
+-  util.has_type("aws_sqs_queue")
+-  not util.has_type("aws_sqs_queue_policy")
+-  msg := "every aws_sqs_queue must have a queue policy (TLS-only enforcement)"
++	util.has_type("aws_sqs_queue")
++	not util.has_type("aws_sqs_queue_policy")
++	msg := "every aws_sqs_queue must have a queue policy (TLS-only enforcement)"
+ }
+ 
+ deny contains msg if {
+-  some r in util.resources_of_type("aws_sqs_queue_policy")
+-  doc := r.change.after.policy
+-  not tls_deny_statement_present(doc)
+-  msg := sprintf("SQS %s: queue policy must deny sqs:* when aws:SecureTransport is false", [r.name])
++	some r in util.resources_of_type("aws_sqs_queue_policy")
++	doc := r.change.after.policy
++	not tls_deny_statement_present(doc)
++	msg := sprintf("SQS %s: queue policy must deny sqs:* when aws:SecureTransport is false", [r.name])
+ }
+ 
+ tls_deny_statement_present(doc) if {
+-  is_string(doc)
+-  policy := json.unmarshal(doc)
+-  some st in policy.Statement
+-  st.Effect == "Deny"
+-  object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
++	is_string(doc)
++	policy := json.unmarshal(doc)
++	some st in policy.Statement
++	st.Effect == "Deny"
++	object.get(st.Condition.Bool, "aws:SecureTransport", "") == "false"
+ }
+diff --git a/policies/sqs/sqs_test.rego b/policies/sqs/sqs_test.rego
+index 3ce1b5b..ad70e07 100644
+--- a/policies/sqs/sqs_test.rego
++++ b/policies/sqs/sqs_test.rego
+@@ -7,51 +7,93 @@ import data.policies.sqs
+ import data.util
+ 
+ test_compliant_sqs_plan if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sqs_queue", "q", {
+-      "queue_name": "q",
+-      "sqs_managed_sse_enabled": false,
+-      "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
+-    }),
+-    util.mock_resource("aws_sqs_queue_policy", "p", {
+-      "policy": json.marshal({
+-        "Version": "2012-10-17",
+-        "Statement": [{
+-          "Sid": "DenyInsecureTransport",
+-          "Effect": "Deny",
+-          "Principal": "*",
+-          "Action": "sqs:*",
+-          "Resource": "arn:aws:sqs:us-east-1:123456789012:q",
+-          "Condition": {"Bool": {"aws:SecureTransport": "false"}},
+-        }],
+-      }),
+-    }),
+-  ])
+-
+-  denies := sqs.deny with input as plan
+-  count(denies) == 0
++	plan := util.mock_plan([
++		util.mock_resource("aws_sqs_queue", "q", {
++			"queue_name": "q",
++			"sqs_managed_sse_enabled": false,
++			"kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
++		}),
++		util.mock_resource("aws_sqs_queue_policy", "p", {
++			"policy": json.marshal({
++				"Version": "2012-10-17",
++				"Statement": [{
++					"Sid": "DenyInsecureTransport",
++					"Effect": "Deny",
++					"Principal": "*",
++					"Action": "sqs:*",
++					"Resource": "arn:aws:sqs:us-east-1:123456789012:q",
++					"Condition": {"Bool": {"aws:SecureTransport": "false"}},
++				}],
++			}),
++		}),
++	])
++
++	denies := sqs.deny with input as plan
++	count(denies) == 0
+ }
+ 
+ test_unencrypted_queue_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sqs_queue", "q", {
+-      "queue_name": "q",
+-      "sqs_managed_sse_enabled": true,
+-    }),
+-  ])
+-
+-  denies := sqs.deny with input as plan
+-  count(denies) >= 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_sqs_queue", "q", {
++			"queue_name": "q",
++			"sqs_managed_sse_enabled": true,
++		}),
++	])
++
++	denies := sqs.deny with input as plan
++	count(denies) >= 1
++}
++
++test_kms_unknown_not_denied if {
++	plan := util.mock_plan([
++		util.mock_resource_unknown(
++			"aws_sqs_queue", "q", {
++				"queue_name": "q",
++				"sqs_managed_sse_enabled": false,
++				"kms_master_key_id": null,
++			},
++			{"kms_master_key_id": true},
++		),
++		util.mock_resource("aws_sqs_queue_policy", "p", {
++			"policy": json.marshal({
++				"Version": "2012-10-17",
++				"Statement": [{
++					"Sid": "DenyInsecureTransport",
++					"Effect": "Deny",
++					"Principal": "*",
++					"Action": "sqs:*",
++					"Resource": "arn:aws:sqs:us-east-1:123456789012:q",
++					"Condition": {"Bool": {"aws:SecureTransport": "false"}},
++				}],
++			}),
++		}),
++	])
++
++	denies := sqs.deny with input as plan
++	count(denies) == 0
++}
++
++test_kms_known_bad_denied if {
++	plan := util.mock_plan([
++		util.mock_resource("aws_sqs_queue", "q", {
++			"queue_name": "q",
++			"sqs_managed_sse_enabled": false,
++			"kms_master_key_id": "not-an-arn",
++		}),
++	])
++
++	denies := sqs.deny with input as plan
++	count(denies) >= 1
+ }
+ 
+ test_queue_without_policy_denied if {
+-  plan := util.mock_plan([
+-    util.mock_resource("aws_sqs_queue", "q", {
+-      "queue_name": "q",
+-      "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
+-    }),
+-  ])
+-
+-  denies := sqs.deny with input as plan
+-  count(denies) >= 1
++	plan := util.mock_plan([
++		util.mock_resource("aws_sqs_queue", "q", {
++			"queue_name": "q",
++			"kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/abc",
++		}),
++	])
++
++	denies := sqs.deny with input as plan
++	count(denies) >= 1
+ }

@@ -1,0 +1,382 @@
+diff --git a/infra/hml/main.tf b/infra/hml/main.tf
+index 3bb589f..8ade5c8 100644
+--- a/infra/hml/main.tf
++++ b/infra/hml/main.tf
+@@ -8,13 +8,83 @@ data "aws_iam_policy_document" "lambda_assume" {
+   }
+ }
+ 
++data "aws_caller_identity" "current" {}
++
++data "terraform_remote_state" "k8s_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-k8s-infra/hml/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
++data "terraform_remote_state" "db_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-db-infra/hml/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
+ locals {
+-  lambda_package_path        = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
+-  create_auth_lambda_role    = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
+-  create_authorizer_role     = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
+-  auth_lambda_role_arn       = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
+-  authorizer_lambda_role_arn = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
+-  backend_enabled            = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  lambda_package_path         = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
++  create_auth_lambda_role     = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
++  create_authorizer_role      = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
++  auth_lambda_role_arn        = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
++  authorizer_lambda_role_arn  = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
++  backend_enabled             = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  database_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  database_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.db_infra.outputs.db_security_group_id]
++  vpc_link_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  vpc_link_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.k8s_infra.outputs.internal_alb_security_group_id]
++}
++
++resource "aws_security_group" "auth_lambda" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-lambda"
++  description = "Private egress for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["10.0.0.0/8"]
++  }
++}
++
++resource "aws_security_group" "secrets_manager_endpoint" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-secrets-manager-endpoint"
++  description = "Private Secrets Manager access for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  ingress {
++    description     = "Secrets Manager HTTPS from auth Lambda"
++    from_port       = 443
++    to_port         = 443
++    protocol        = "tcp"
++    security_groups = [aws_security_group.auth_lambda[0].id]
++  }
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["0.0.0.0/0"]
++  }
++}
++
++resource "aws_vpc_endpoint" "secrets_manager" {
++  count               = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  vpc_id              = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
++  vpc_endpoint_type   = "Interface"
++  subnet_ids          = local.database_subnet_ids
++  security_group_ids  = [aws_security_group.secrets_manager_endpoint[0].id]
++  private_dns_enabled = true
+ }
+ 
+ resource "aws_iam_role" "auth" {
+@@ -72,11 +142,11 @@ resource "aws_lambda_function" "auth" {
+   dynamic "vpc_config" {
+     for_each = var.auth_lambda_vpc_enabled ? [1] : []
+     content {
+-      subnet_ids         = var.database_subnet_ids
+-      security_group_ids = var.database_security_group_ids
++      subnet_ids         = local.database_subnet_ids
++      security_group_ids = [aws_security_group.auth_lambda[0].id]
+     }
+   }
+-  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
++  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, DATABASE_HOST = var.database_host, DATABASE_PORT = tostring(var.database_port), DATABASE_NAME = var.database_name, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
+ }
+ resource "aws_lambda_function" "authorizer" {
+   function_name    = "${var.name_prefix}-authorizer"
+@@ -115,11 +185,11 @@ resource "aws_apigatewayv2_route" "auth" {
+ resource "aws_apigatewayv2_vpc_link" "backend" {
+   count              = local.backend_enabled ? 1 : 0
+   name               = "${var.name_prefix}-backend"
+-  subnet_ids         = var.vpc_link_subnet_ids
+-  security_group_ids = var.vpc_link_security_group_ids
++  subnet_ids         = local.vpc_link_subnet_ids
++  security_group_ids = local.vpc_link_security_group_ids
+   lifecycle {
+     precondition {
+-      condition     = length(var.vpc_link_subnet_ids) > 0 && alltrue([for id in var.vpc_link_subnet_ids : trimspace(id) != ""]) && length(var.vpc_link_security_group_ids) > 0 && alltrue([for id in var.vpc_link_security_group_ids : trimspace(id) != ""])
++      condition     = length(local.vpc_link_subnet_ids) > 0 && alltrue([for id in local.vpc_link_subnet_ids : trimspace(id) != ""]) && length(local.vpc_link_security_group_ids) > 0 && alltrue([for id in local.vpc_link_security_group_ids : trimspace(id) != ""])
+       error_message = "VPC Link subnet and security-group IDs must be non-empty when backend integration is enabled."
+     }
+   }
+diff --git a/infra/hml/variables.tf b/infra/hml/variables.tf
+index 669e82f..573075c 100644
+--- a/infra/hml/variables.tf
++++ b/infra/hml/variables.tf
+@@ -10,6 +10,18 @@ variable "jwt_private_key_secret_arn" { type = string }
+ variable "jwt_public_key_parameter_name" { type = string }
+ variable "jwt_public_key_parameter_arn" { type = string }
+ variable "database_secret_arn" { type = string }
++variable "database_host" {
++  type    = string
++  default = ""
++}
++variable "database_port" {
++  type    = number
++  default = 5432
++}
++variable "database_name" {
++  type    = string
++  default = "workshop"
++}
+ variable "academy_mode" {
+   description = "Use the pre-existing AWS Academy LabRole and do not create IAM roles or policies."
+   type        = bool
+@@ -64,22 +76,6 @@ variable "auth_lambda_vpc_enabled" {
+   type    = bool
+   default = true
+ }
+-variable "database_security_group_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_security_group_ids) > 0 && alltrue([for id in var.database_security_group_ids : trimspace(id) != ""]))
+-    error_message = "database_security_group_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+-variable "database_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_subnet_ids) > 0 && alltrue([for id in var.database_subnet_ids : trimspace(id) != ""]))
+-    error_message = "database_subnet_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+ variable "backend_integration_uri" {
+   type    = string
+   default = ""
+@@ -92,11 +88,8 @@ variable "deploy_auth_only" {
+   type    = bool
+   default = true
+ }
+-variable "vpc_link_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-}
+-variable "vpc_link_security_group_ids" {
+-  type    = list(string)
+-  default = []
++
++variable "destroy_mode" {
++  type    = bool
++  default = false
+ }
+diff --git a/infra/prod/main.tf b/infra/prod/main.tf
+index ff1d407..f0ef04d 100644
+--- a/infra/prod/main.tf
++++ b/infra/prod/main.tf
+@@ -8,13 +8,93 @@ data "aws_iam_policy_document" "lambda_assume" {
+   }
+ }
+ 
++data "aws_caller_identity" "current" {}
++
++data "terraform_remote_state" "k8s_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-k8s-infra/prod/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
++data "terraform_remote_state" "db_infra" {
++  backend = "s3"
++  config = {
++    bucket = "tc3-tfstate-${data.aws_caller_identity.current.account_id}"
++    key    = "repo-db-infra/prod/terraform.tfstate"
++    region = var.aws_region
++  }
++}
++
+ locals {
+-  lambda_package_path        = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
+-  create_auth_lambda_role    = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
+-  create_authorizer_role     = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
+-  auth_lambda_role_arn       = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
+-  authorizer_lambda_role_arn = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
+-  backend_enabled            = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  lambda_package_path         = var.lambda_package_path != "" ? var.lambda_package_path : "${path.module}/../../dist.zip"
++  create_auth_lambda_role     = !var.academy_mode && trimspace(var.auth_lambda_role_arn) == ""
++  create_authorizer_role      = !var.academy_mode && trimspace(var.authorizer_lambda_role_arn) == ""
++  auth_lambda_role_arn        = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.auth_lambda_role_arn) != "" ? trimspace(var.auth_lambda_role_arn) : aws_iam_role.auth[0].arn
++  authorizer_lambda_role_arn  = var.academy_mode ? trimspace(var.lab_role_arn) : trimspace(var.authorizer_lambda_role_arn) != "" ? trimspace(var.authorizer_lambda_role_arn) : aws_iam_role.authorizer[0].arn
++  backend_enabled             = !var.deploy_auth_only && trimspace(var.backend_integration_uri) != ""
++  database_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  database_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.db_infra.outputs.db_security_group_id]
++  vpc_link_subnet_ids         = var.destroy_mode ? [] : data.terraform_remote_state.k8s_infra.outputs.private_subnet_ids
++  vpc_link_security_group_ids = var.destroy_mode ? [] : [data.terraform_remote_state.k8s_infra.outputs.internal_alb_security_group_id]
++}
++
++resource "aws_security_group" "auth_lambda" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-lambda"
++  description = "Private egress for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["10.0.0.0/8"]
++  }
++}
++
++resource "aws_vpc_security_group_ingress_rule" "auth_to_database" {
++  count                        = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  security_group_id            = local.database_security_group_ids[0]
++  referenced_security_group_id = aws_security_group.auth_lambda[0].id
++  from_port                    = 5432
++  to_port                      = 5432
++  ip_protocol                  = "tcp"
++  description                  = "Postgres from the auth Lambda"
++}
++
++resource "aws_security_group" "secrets_manager_endpoint" {
++  count       = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  name        = "${var.name_prefix}-secrets-manager-endpoint"
++  description = "Private Secrets Manager access for the auth Lambda"
++  vpc_id      = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++
++  ingress {
++    description     = "Secrets Manager HTTPS from auth Lambda"
++    from_port       = 443
++    to_port         = 443
++    protocol        = "tcp"
++    security_groups = [aws_security_group.auth_lambda[0].id]
++  }
++
++  egress {
++    from_port   = 0
++    to_port     = 0
++    protocol    = "-1"
++    cidr_blocks = ["0.0.0.0/0"]
++  }
++}
++
++resource "aws_vpc_endpoint" "secrets_manager" {
++  count               = var.auth_lambda_vpc_enabled && !var.destroy_mode ? 1 : 0
++  vpc_id              = data.terraform_remote_state.k8s_infra.outputs.vpc_id
++  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
++  vpc_endpoint_type   = "Interface"
++  subnet_ids          = local.database_subnet_ids
++  security_group_ids  = [aws_security_group.secrets_manager_endpoint[0].id]
++  private_dns_enabled = true
+ }
+ 
+ resource "aws_iam_role" "auth" {
+@@ -69,11 +149,11 @@ resource "aws_lambda_function" "auth" {
+   dynamic "vpc_config" {
+     for_each = var.auth_lambda_vpc_enabled ? [1] : []
+     content {
+-      subnet_ids         = var.database_subnet_ids
+-      security_group_ids = var.database_security_group_ids
++      subnet_ids         = local.database_subnet_ids
++      security_group_ids = [aws_security_group.auth_lambda[0].id]
+     }
+   }
+-  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
++  environment { variables = { JWT_PRIVATE_KEY_SECRET_ARN = var.jwt_private_key_secret_arn, DATABASE_SECRET_ARN = var.database_secret_arn, DATABASE_HOST = var.database_host, DATABASE_PORT = tostring(var.database_port), DATABASE_NAME = var.database_name, JWT_ALGORITHM = "RS256", JWT_ISSUER = var.jwt_issuer, JWT_AUDIENCE = var.jwt_audience, JWT_EXPIRES_IN = tostring(var.jwt_expires_in) } }
+ }
+ resource "aws_lambda_function" "authorizer" {
+   function_name    = "${var.name_prefix}-authorizer"
+@@ -111,11 +191,11 @@ resource "aws_apigatewayv2_route" "auth" {
+ resource "aws_apigatewayv2_vpc_link" "backend" {
+   count              = local.backend_enabled ? 1 : 0
+   name               = "${var.name_prefix}-backend"
+-  subnet_ids         = var.vpc_link_subnet_ids
+-  security_group_ids = var.vpc_link_security_group_ids
++  subnet_ids         = local.vpc_link_subnet_ids
++  security_group_ids = local.vpc_link_security_group_ids
+   lifecycle {
+     precondition {
+-      condition     = length(var.vpc_link_subnet_ids) > 0 && alltrue([for id in var.vpc_link_subnet_ids : trimspace(id) != ""]) && length(var.vpc_link_security_group_ids) > 0 && alltrue([for id in var.vpc_link_security_group_ids : trimspace(id) != ""])
++      condition     = length(local.vpc_link_subnet_ids) > 0 && alltrue([for id in local.vpc_link_subnet_ids : trimspace(id) != ""]) && length(local.vpc_link_security_group_ids) > 0 && alltrue([for id in local.vpc_link_security_group_ids : trimspace(id) != ""])
+       error_message = "VPC Link subnet and security-group IDs must be non-empty when backend integration is enabled."
+     }
+   }
+diff --git a/infra/prod/variables.tf b/infra/prod/variables.tf
+index 00a94cb..0270d30 100644
+--- a/infra/prod/variables.tf
++++ b/infra/prod/variables.tf
+@@ -10,6 +10,18 @@ variable "jwt_private_key_secret_arn" { type = string }
+ variable "jwt_public_key_parameter_name" { type = string }
+ variable "jwt_public_key_parameter_arn" { type = string }
+ variable "database_secret_arn" { type = string }
++variable "database_host" {
++  type    = string
++  default = ""
++}
++variable "database_port" {
++  type    = number
++  default = 5432
++}
++variable "database_name" {
++  type    = string
++  default = "workshop"
++}
+ variable "academy_mode" {
+   description = "Use the pre-existing AWS Academy LabRole and temporary credentials."
+   type        = bool
+@@ -64,22 +76,6 @@ variable "auth_lambda_vpc_enabled" {
+   type    = bool
+   default = true
+ }
+-variable "database_security_group_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_security_group_ids) > 0 && alltrue([for id in var.database_security_group_ids : trimspace(id) != ""]))
+-    error_message = "database_security_group_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+-variable "database_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-  validation {
+-    condition     = !var.auth_lambda_vpc_enabled || (length(var.database_subnet_ids) > 0 && alltrue([for id in var.database_subnet_ids : trimspace(id) != ""]))
+-    error_message = "database_subnet_ids must contain non-empty values when auth_lambda_vpc_enabled is true."
+-  }
+-}
+ variable "backend_integration_uri" {
+   type    = string
+   default = ""
+@@ -92,11 +88,8 @@ variable "deploy_auth_only" {
+   type    = bool
+   default = true
+ }
+-variable "vpc_link_subnet_ids" {
+-  type    = list(string)
+-  default = []
+-}
+-variable "vpc_link_security_group_ids" {
+-  type    = list(string)
+-  default = []
++
++variable "destroy_mode" {
++  type    = bool
++  default = false
+ }

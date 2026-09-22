@@ -1,0 +1,979 @@
+diff --git a/.terraform.lock.hcl b/.terraform.lock.hcl
+index b7a1533..dd70fa0 100644
+--- a/.terraform.lock.hcl
++++ b/.terraform.lock.hcl
+@@ -1,121 +1,42 @@
+ # This file is maintained automatically by "terraform init".
+ # Manual edits may be lost in future updates.
+ 
+-provider "registry.terraform.io/hashicorp/archive" {
+-  version = "2.1.0"
+-  hashes = [
+-    "h1:K4Q9hmTnCrGbXZBq2hf6CbekHx5oXFwPBmWOwAPNqtM=",
+-    "h1:Rjd4bHMA69V+16tiriAUTW8vvqoljzNLmEaRBCgzpUs=",
+-    "h1:f3WXKM/FBu5EMY6j2BGt982hzVMNicrxTyEAz5EsrOU=",
+-    "zh:033279ecbf60f565303222e9a6d26b50fdebe43aa1c6e8f565f09bb64d67c3fd",
+-    "zh:0af998e42eb421c92e87202df5bfee436b3cfe553214394f08d786c72a9e3f70",
+-    "zh:1183b661c692f38409a61eefb5d412167c246fcd9e49d4d61d6d910012d206ba",
+-    "zh:5febb66f4a8207117f71dcd460fb9c81d3afb7b600b5e598cf517cf6e27cf4b2",
+-    "zh:66135ce46d29d0ccf0e3b6a119423754ca334dbf4266bc989cce5b0b667b5fde",
+-    "zh:6b9dc1a4f0a680bb650a7191784927f99675a8c8dd3c155ba821185f630db604",
+-    "zh:91e249482c016ecf6bf8b83849964005cd2d0b4396688419cd1752809b46b23e",
+-    "zh:a6a2e5f2f010c511e66174cb84ea18899e8bcfc1354c4b9fed972fdb131ffffc",
+-    "zh:bb1f6abc76552a883732caff897ff7b07a91977a9b4bb97915f6aac54116bb65",
+-    "zh:f05a9a63607f85719fde705f58d82ee16fa67f9158a5c3424c0216507631eddf",
+-    "zh:fc603a05a06814387ffa4a054d1baee8ea6b5ab32c53cb73e90a5bf9a2616777",
+-  ]
+-}
+-
+ provider "registry.terraform.io/hashicorp/google" {
+-  version     = "3.89.0"
+-  constraints = ">= 2.12.0, >= 3.43.0, ~> 3.45, >= 3.86.0, < 4.0.0"
++  version     = "7.46.1"
++  constraints = ">= 3.33.0, >= 3.83.0, >= 4.64.0, >= 6.18.0, >= 6.19.0, >= 6.28.0, < 8.0.0"
+   hashes = [
+-    "h1:+C8w9B9aJMpALgmFnqZuHJk/pEDTHWkZ+IrNCEmjB+k=",
+-    "zh:208317c042622a4f761e96cb09871c57d7601ff5f21fc5952567d3940203cd93",
+-    "zh:227eb06659d5ecbc679de97ce130e8d7400ed0f04fb9e4d13869057ae2b1113e",
+-    "zh:267809935e07e78acfc28f1a0aab03d659c777bff5300ae818d76578eb3f3034",
+-    "zh:59c43802370a6e0893be34c50f036f4bc8dbd6a77475846f2c5ea0a2d522dbfa",
+-    "zh:66a482ef171381ca5d1d5037216db1688381cd72ba939a416b5c81e61352bac6",
+-    "zh:7314db9b6c529dc6d391ca852333229dc79ac2be460dc7410fb73cb038cd0672",
+-    "zh:79c051035bc5f0e019e650103109fab17051d1d33bffa4040bae5262820577cb",
+-    "zh:79f775b07d070a892fdde9c1eff01fe0a4473be2f8b188aea80ac709ce666352",
+-    "zh:7ab4db6ff5cb9ba8b7fbf17b789e9172548ef029a5c48c04cfa1f6c4926aaa88",
+-    "zh:9a0589b2e5da783158e81a4cfc611951a6248b456893cdfac3ded041d25ea6b2",
+-    "zh:f2a4a0a875ddff79016cb3f7f6705ef263caabb312836f999bfe56decdac673e",
++    "h1:oaPjmiPJz4rtO1CCcQ53YsY+Xr/vUEvmYRz10SGieuk=",
++    "zh:2e0e513915988d80582f8db7ff18c6242b8f4fad977d428feb11bcbd30d8ba95",
++    "zh:44ebe20d2a548c4318cc75497b7de0ded4bcb5867dbc9d7418f1941d5f6c5c2c",
++    "zh:48016a7ad372f27aa44b4f4611eb24fc634b05b0c25b84ca55a359f525f5a36f",
++    "zh:726fc1bbacf317bf946b53adc71248f890f78ede639c7d9e6fc52716668fd0ef",
++    "zh:9944d3128c69217d976844d936dd642d07140412d56e04bada95da189be37bdb",
++    "zh:a77548865bd320243641389763d3696b05c540d1cbb9868b249371626bab4132",
++    "zh:af6a79150120844c45236dd8d0e39fec76ef50528f5de9a623acbfb96108e4b8",
++    "zh:c1f3a7b1652db3a9f429cb749e9a4a3efcbf980d9d90f2634f25973931f2eedc",
++    "zh:d18255642cae2f00cf5a2946652a17cbf59a0d65c56bc0aac31d2509a360000e",
++    "zh:df3a71bf6d245a9f7c6548680055c22ecc8432f664b3d93d2ea0363f4c4d56ad",
++    "zh:e406cc8194485420bee42af19e3a545272a5ce45bc9ce7d5ac4438fb1a3f6fc6",
++    "zh:f569b65999264a9416862bca5cd2a6177d94ccb0424f3a4ef424428912b9cb3c",
+   ]
+ }
+ 
+ provider "registry.terraform.io/hashicorp/google-beta" {
+-  version     = "3.89.0"
+-  constraints = "~> 3.45"
+-  hashes = [
+-    "h1:kT38l+vDgN6aY+y9QBR1FQMQsUCjteVxYEJ4l36AtoU=",
+-    "zh:06002648b127aa5741fcddbf33088553ec0845fc9eb024605b491ff79e9cc74d",
+-    "zh:07d1b067185ff1deac958de2e3414553d265e000b34cf5014524898330e10b4f",
+-    "zh:3e3c3836df68e1ff01140d36af7e32b84232f4089666a4074a505793b0b73910",
+-    "zh:42f731398e7ca5d5850eec3de68a847455210a27510e83b85213ffb713432ce4",
+-    "zh:5dfeeddde4029a999cb82444659f38b96804d105d138614abb7e8bd05cfd7f67",
+-    "zh:725fac8088cc00b17985a43e40454bc9b8bcca2c50059b512ad24400a2a498fb",
+-    "zh:978d7f00c20ad8dda0d53e406f1ea756c59fb1a23d1794a3633ab203a4547aef",
+-    "zh:b4d3d8276d1679250576f4394a5a6c4dbf4543f4829e351fb0d344b88990b310",
+-    "zh:c6ce14e928fe755fb05c636e8bbc3dc3fe471103e5f5219c5dd924b30eea1022",
+-    "zh:f6a2d6815884f55f4cf0afb3ee18b51a73682ba0fec0ff0387b988248eb570fd",
+-    "zh:fb3dd2c29f78af8861ca1f5ef741dcbe9d47fe3d4a9445be4cbef82a42c3250b",
+-  ]
+-}
+-
+-provider "registry.terraform.io/hashicorp/local" {
+-  version     = "2.1.0"
+-  constraints = "2.1.0"
+-  hashes = [
+-    "h1:/OpJKWupvFd8WJX1mTt8vi01pP7dkA6e//4l4C3TExE=",
+-    "h1:EYZdckuGU3n6APs97nS2LxZm3dDtGqyM4qaIvsmac8o=",
+-    "h1:KfieWtVyGWwplSoLIB5usKAUnrIkDQBkWaR5TI+4WYg=",
+-    "zh:0f1ec65101fa35050978d483d6e8916664b7556800348456ff3d09454ac1eae2",
+-    "zh:36e42ac19f5d68467aacf07e6adcf83c7486f2e5b5f4339e9671f68525fc87ab",
+-    "zh:6db9db2a1819e77b1642ec3b5e95042b202aee8151a0256d289f2e141bf3ceb3",
+-    "zh:719dfd97bb9ddce99f7d741260b8ece2682b363735c764cac83303f02386075a",
+-    "zh:7598bb86e0378fd97eaa04638c1a4c75f960f62f69d3662e6d80ffa5a89847fe",
+-    "zh:ad0a188b52517fec9eca393f1e2c9daea362b33ae2eb38a857b6b09949a727c1",
+-    "zh:c46846c8df66a13fee6eff7dc5d528a7f868ae0dcf92d79deaac73cc297ed20c",
+-    "zh:dc1a20a2eec12095d04bf6da5321f535351a594a636912361db20eb2a707ccc4",
+-    "zh:e57ab4771a9d999401f6badd8b018558357d3cbdf3d33cc0c4f83e818ca8e94b",
+-    "zh:ebdcde208072b4b0f8d305ebf2bfdc62c926e0717599dcf8ec2fd8c5845031c3",
+-    "zh:ef34c52b68933bedd0868a13ccfd59ff1c820f299760b3c02e008dc95e2ece91",
+-  ]
+-}
+-
+-provider "registry.terraform.io/hashicorp/null" {
+-  version = "3.1.0"
+-  hashes = [
+-    "h1:SFT7X3zY18CLWjoH2GfQyapxsRv6GDKsy9cF1aRwncc=",
+-    "h1:vpC6bgUQoJ0znqIKVFevOdq+YQw42bRq0u+H3nto8nA=",
+-    "h1:xhbHC6in3nQryvTQBWKxebi3inG5OCgHgc4fRxL0ymc=",
+-    "zh:02a1675fd8de126a00460942aaae242e65ca3380b5bb192e8773ef3da9073fd2",
+-    "zh:53e30545ff8926a8e30ad30648991ca8b93b6fa496272cd23b26763c8ee84515",
+-    "zh:5f9200bf708913621d0f6514179d89700e9aa3097c77dac730e8ba6e5901d521",
+-    "zh:9ebf4d9704faba06b3ec7242c773c0fbfe12d62db7d00356d4f55385fc69bfb2",
+-    "zh:a6576c81adc70326e4e1c999c04ad9ca37113a6e925aefab4765e5a5198efa7e",
+-    "zh:a8a42d13346347aff6c63a37cda9b2c6aa5cc384a55b2fe6d6adfa390e609c53",
+-    "zh:c797744d08a5307d50210e0454f91ca4d1c7621c68740441cf4579390452321d",
+-    "zh:cecb6a304046df34c11229f20a80b24b1603960b794d68361a67c5efe58e62b8",
+-    "zh:e1371aa1e502000d9974cfaff5be4cfa02f47b17400005a16f14d2ef30dc2a70",
+-    "zh:fc39cc1fe71234a0b0369d5c5c7f876c71b956d23d7d6f518289737a001ba69b",
+-    "zh:fea4227271ebf7d9e2b61b89ce2328c7262acd9fd190e1fd6d15a591abfa848e",
+-  ]
+-}
+-
+-provider "registry.terraform.io/hashicorp/random" {
+-  version = "3.1.0"
++  version     = "7.46.1"
++  constraints = ">= 4.64.0, >= 5.36.0, >= 6.18.0, >= 6.19.0, >= 6.28.0, < 8.0.0"
+   hashes = [
+-    "h1:BZMEPucF+pbu9gsPk0G0BHx7YP04+tKdq2MrRDF1EDM=",
+-    "h1:EPIax4Ftp2SNdB9pUfoSjxoueDoLc/Ck3EUoeX0Dvsg=",
+-    "h1:rKYu5ZUbXwrLG1w81k7H3nce/Ys6yAxXhWcbtk36HjY=",
+-    "zh:2bbb3339f0643b5daa07480ef4397bd23a79963cc364cdfbb4e86354cb7725bc",
+-    "zh:3cd456047805bf639fbf2c761b1848880ea703a054f76db51852008b11008626",
+-    "zh:4f251b0eda5bb5e3dc26ea4400dba200018213654b69b4a5f96abee815b4f5ff",
+-    "zh:7011332745ea061e517fe1319bd6c75054a314155cb2c1199a5b01fe1889a7e2",
+-    "zh:738ed82858317ccc246691c8b85995bc125ac3b4143043219bd0437adc56c992",
+-    "zh:7dbe52fac7bb21227acd7529b487511c91f4107db9cc4414f50d04ffc3cab427",
+-    "zh:a3a9251fb15f93e4cfc1789800fc2d7414bbc18944ad4c5c98f466e6477c42bc",
+-    "zh:a543ec1a3a8c20635cf374110bd2f87c07374cf2c50617eee2c669b3ceeeaa9f",
+-    "zh:d9ab41d556a48bd7059f0810cf020500635bfc696c9fc3adab5ea8915c1d886b",
+-    "zh:d9e13427a7d011dbd654e591b0337e6074eef8c3b9bb11b2e39eaaf257044fd7",
+-    "zh:f7605bd1437752114baf601bdf6931debe6dc6bfe3006eb7e9bb9080931dca8a",
++    "h1:SqnbR8yZBqKHskPkhvNUe3maRLKaDCK3ynyU8eJitJc=",
++    "zh:0eeb073354857db03fac1952cef3b7353099cab8f20d770561ad3383cc9403b1",
++    "zh:1c911cc686eefea84391b54b77584dfba951dd6991d582dcb5972961c4690ba1",
++    "zh:2651046b11362fa5e8f8615fc022e935da990885466a5f39a2d28cf2eeb21165",
++    "zh:4681f505044b6ef7184c502b9f2dd52f2c8bc02a5c0b9c488b839d5fce37983d",
++    "zh:74c4bfc188e40a9163df90a1070543a66c69381dbd69f1e1efaaa065e9f381b2",
++    "zh:7854046ae83123ec4d38dfbacffaa330d586c69aea9a7a8239eb9df2570f1569",
++    "zh:7b12a2d6848b12880635158978c1ae12bb5c34200b62f6e43489120f31aae454",
++    "zh:a88f335a8d2c81e37191f6fda1eff09c857896a21f6befb130540e6ce9fa7842",
++    "zh:cd97effa0f6a1412719af2ba3d8ca8416bd8418d46a2191be88a8cd5e8f12353",
++    "zh:e4d73190c5930cc11211ddd3f2aeb913f48b92014f93ac803e6e4addd6329b47",
++    "zh:f12629e847ac6b8a0238505b38a5b7aedbb2f3abe0782ec46c0717762d55d127",
++    "zh:f569b65999264a9416862bca5cd2a6177d94ccb0424f3a4ef424428912b9cb3c",
+   ]
+ }
+diff --git a/README.md b/README.md
+index ee8f87c..51a0d24 100644
+--- a/README.md
++++ b/README.md
+@@ -1,20 +1,31 @@
+-Spine Liquor Terraform configuration
++Spine Delivery Terraform module
+ ----------
+ 
+-This module holds a reusable terraform module which creates the Liquor Server infrastructure.
++This repository holds a reusable Terraform module which creates the Delivery Server infrastructure.
+ 
+-The module is configured with the GCE environment details alongside the Liquor Server container image 
++The module is configured with the GCE environment details alongside the Delivery Server container image 
+ and the VM IP address.
+ 
+-Following the best practices, the Liquor server will reside in its own VPC and region.
++Following the best practices, the Delivery server will reside in its own VPC and region.
+ 
+ When working with App Engine applications, consider picking up a region closed to the App Engine
+ apps location.
+ 
++Requirements
++----------
++
++The module requires Terraform `1.3.0` or newer, and the `google` and `google-beta` providers from
++`6.28.0` up to, but not including, `8.0.0`. The upper bound is set by the Google-maintained modules
++this module builds upon, which are also the reason `google-beta` is needed. Terraform selects a matching provider during `terraform init`, so the constraints
++only need declaring in your configuration if you want to narrow them further.
++
++Terraform reads Google Cloud credentials through [Application Default Credentials][adc].
++On a workstation, `gcloud auth application-default login` provides them.
++
+ Deployment configuration
+ ----------
+ 
+-The Liquor module has the following inputs available for configuring the deployment and the server itself:
++The Delivery module has the following inputs available for configuring the deployment and the server itself:
+ 
+ Below you will find a complete configuration example.
+ 
+@@ -26,26 +37,38 @@ Some values that are used several times in the main configuration are declared a
+ variable "project" {
+   type = string
+   description = "Identifier of the GCP project where Terraform should perform the deployment."
+-  default = ""   # Should be set to your project in which the Liquor will be deployed.
++  default = ""   # Should be set to your project in which the Delivery server will be deployed.
+ }
+ 
+ variable "region" {
+   type = string
+   description = "GCP region to place resources in."
+-  default = ""   # Should be set to the region in which the Liquor will be deployed [1].
++  default = ""   # Should be set to the region in which the Delivery server will be deployed [1].
+ }
+ 
+ variable "zone" {
+   type = string
+   description = "GCP zone to place resources in."
+-  default = ""   # Should be set to the zone in which the Liquor will be deployed [1].
++  default = ""   # Should be set to the zone in which the Delivery server will be deployed [1].
+ }
+ ```
+ **[1]** To get more info about GCP zones and regions please refer to the [docs][regions-zones].
+ 
+-`liquor.tf`:
++`delivery.tf`:
+ ```terraform
+-terraform { 
++terraform {
++  required_version = ">= 1.3.0"
++
++  required_providers {
++    google = {   # The module was tested with the `7.46` line of the “google” providers.
++      source  = "hashicorp/google"
++      version = "~> 7.46"
++    }
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = "~> 7.46"
++    }
++  }
+ }
+ 
+ provider "google" {   # Enables the “google” provider.
+@@ -56,9 +79,9 @@ provider "google-beta" {   # Enables “google-beta” provider to allow require
+   project = var.project   # Refers to the “project” variable in the `variables.tf` file.
+ }
+ 
+-resource "google_compute_address" "liquor-ip" {   # IP the main application will use to connect to the Liquor server. 
+-  name        = "my-liquor-ip"   # Choose the name you'd like.
+-  description = "The public static IP address of the Liquor server."
++resource "google_compute_address" "delivery-ip" {   # IP the main application will use to connect to the Delivery server. 
++  name        = "my-delivery-ip"   # Choose the name you'd like.
++  description = "The public static IP address of the Delivery server."
+   region      = var.region   # Refers to the “region” variable in the `variables.tf` file.
+ 
+   lifecycle {   # Configures the address not to be destroyed and recreated in the future deployments.
+@@ -66,17 +89,17 @@ resource "google_compute_address" "liquor-ip" {   # IP the main application will
+   }
+ }
+ 
+-module "spine-liquor" {
+-  source     = "SpineEventEngine/spine-liquor/google"
+-  version    = "0.10.0"   # Version of the `spine-liquor` Terraform module.
++module "delivery" {
++  source     = "SpineEventEngine/delivery/google"
++  version    = "0.11.0"   # Version of the `delivery` Terraform module.
+   project    = var.project   # Refers to the “project” variable in the `variables.tf` file.
+   region     = var.region   # Refers to the “region” variable in the `variables.tf` file.
+   zone       = var.zone   # Refers to the “zone” variable in the `variables.tf` file.
+-  container  = "gcr.io/spine-dev/simple-message-delivery-server:v0.9.0"   # A container to be deployed [2].
+-  vm_address = google_compute_address.liquor-ip.address   # Refers to the `liquor-ip` resource that 
++  container  = "europe-docker.pkg.dev/spine-event-engine/containers/delivery-server:v0.19.0"   # The Delivery server image to deploy [2].
++  vm_address = google_compute_address.delivery-ip.address   # Refers to the `delivery-ip` resource that 
+                                                           # we've configured in this file above.
+   vm_machine_type = "e2-highcpu-2"   # Type of the GCE instance [3]. Optional parameter.
+-  metadata = {}   # Metadata to set to the GCE instance running Liquor [4]. Optional parameter.
++  metadata = {}   # Metadata to set to the GCE instance running the Delivery server [4]. Optional parameter.
+   env        = [   # Environment variables to set to the container [5]. Optional parameter.
+     {
+       name  = "MAX_INBOUND_MESSAGE_SIZE"   # [6].
+@@ -89,17 +112,18 @@ module "spine-liquor" {
+   ]
+   admin = {   # Configuration of the Admin server [8].
+     enabled = true
+-    port = 8181   # Port on which the Admin server web interface will be available. Optional parameter. Default is `8181`.
+-    login = "admin"   # Login to the Liquor Admin web interface [9]. Optional parameter.
+-    password = "admin"   # Password to the Liquor Admin web interface [9]. Optional parameter.
++    port = 8181   # Port on which the Admin server web interface will be available. Optional parameter; `8080` when omitted.
++    login = "admin"   # Login to the Delivery Admin web interface [9]. Optional parameter.
++    password = "admin"   # Password to the Delivery Admin web interface [9]. Optional parameter.
+   }
+ }
+ ```
+-**[2]** There are 2 possible containers to choose from: “simple-server” and “server”. The “simple-server” 
+-is the recommended choice, as it supports all latest features and shows better performance in general. 
+-The “server” is experimental solution that may undergo a significant changes lately.
++**[2]** The Delivery server is distributed as a Docker image on the public Google Artifact Registry.
++Every release is tagged `v<version>`, and the `latest` tag follows the `master` branch of the
++[`delivery`][delivery-repo] repository. Pin a release tag in production, so that a reboot of the VM
++does not pull a different server.
+ 
+-**[3]** This parameter allows to set the machine type that will be running the Liquor server. By default, the value
++**[3]** This parameter allows to set the machine type that will be running the Delivery server. By default, the value
+ is set to `e2-highcpu-2`([machine description][e2-machine]) so this parameter may be safely deleted if you don't want 
+ to modify it. To get more info on available machine types for GCE instances please refer 
+ to the [docs][gce-machine-resource].
+@@ -107,34 +131,42 @@ to the [docs][gce-machine-resource].
+ **[4]** To get more info on the metadata for GCE instances please refer to the [google platform docs][instance-metadata].
+ 
+ **[5]** The parameter allows to set environment variables to the container (not to the instance running the container),
+-those environment variables will be available for the JVM running the Liquor and to the Liquor java application itself.
+-Tne parameter is optional and can be safely removed if you don't need to set any environment variables.
++those environment variables will be available for the JVM running the Delivery server and to the Delivery server application itself.
++The parameter is optional and can be safely removed if you don't need to set any environment variables.
++The variables the server reads, including the storage mode ones such as `USE_REDIS` and `REDIS_HOST`,
++are described in the [server documentation][server-readme].
+ 
+-**[6]** This environment variable is checked by the Liquor to modify the `gRPC` inbound message size parameter. 
++**[6]** This environment variable is checked by the Delivery server to modify the `gRPC` inbound message size parameter.
+ By default, gRPC allows 4 MB of the max inbound message size. If your payload may exceed this default value
+-it's recommended to set a custom value using this parameter. **Pay attention that this feature is only available on 
+-the “simple-server” containers starting from the `0.7.3` version.** Setting this environment variable for the container
+-that doesn't support this functionality will take no effects.
++it's recommended to set a custom value using this parameter.
+ 
+-**[7]** This environment variable is checked by the Liquor and configures the stale shards auto release procedure.
++**[7]** This environment variable is checked by the Delivery server and configures the stale shards auto release procedure.
+ This procedure allows picking up already occupied shard if one is considered stale. If a gap between a time when
+-the shard was picked last time and current time is equal to or more than `SHARD_PROCESSING_TIMEOUT`, the session 
+-is considered stale and can be picked up again. The check is performed when a session is asked for picking up. **Pay 
+-attention that this feature is only available on the “simple-server” containers starting from the `0.8.3` version.** 
+-Setting this environment variable for the container that doesn't support this functionality will take no effects.
++the shard was picked last time and current time is equal to or more than `SHARD_PROCESSING_TIMEOUT`, the session
++is considered stale and can be picked up again. The check is performed when a session is asked for picking up.
+ 
+ **[8]** This block configures the Admin server web interface that allows real-time monitoring of the shard processing
+-on the server. By default, this option is disabled. **This feature is available for both “simple-server”  and “server” 
+-containers starting from the version `0.8.8`.** Using this setting with containers of lower versions will 
+-take no effect.
++on the server. By default, this option is disabled, and the firewall opens the Admin server port only when it is enabled.
+ 
+-**[9]** By default, the `login` and `password` parameters are determined by the deployed container, so please refer 
+-to the corresponding container documentation to check what is this values for your container. Even though these 
+-parameters are optional and have default values we recommend to set your own `login` and `password`. The instruction 
++**[9]** The Delivery server image accepts `admin` as both the default login and the default password. Even though these
++parameters are optional and have default values we recommend to set your own `login` and `password`. The instruction
+ of how to set sensitive values to the Terraform configuration is available in the [docs][tfvars].
+ 
++Migrating from the `spine-liquor` module
++----------
++
++A deployment created with `SpineEventEngine/spine-liquor/google` can switch the `source` of its
++module block to `SpineEventEngine/delivery/google` and run `terraform plan`. The module carries
++`moved` blocks for the renamed VM and network, so Terraform recognizes the existing resources and
++plans their replacement rather than an unrelated creation. Expect the VM and the network to be
++recreated under the new names, with a downtime while that happens. The static IP address is
++declared outside the module and is kept.
++
++[adc]: https://cloud.google.com/docs/authentication/application-default-credentials
++[delivery-repo]: https://github.com/SpineEventEngine/delivery
+ [e2-machine]: https://cloud.google.com/compute/docs/general-purpose-machines#e2_machine_types_table
+ [gce-machine-resource]: https://cloud.google.com/compute/docs/machine-resource
+ [instance-metadata]: https://cloud.google.com/compute/docs/metadata/overview
+ [regions-zones]: https://cloud.google.com/compute/docs/regions-zones
++[server-readme]: https://github.com/SpineEventEngine/delivery/blob/master/server/README.md
+ [tfvars]: https://developer.hashicorp.com/terraform/tutorials/configuration-language/sensitive-variables#set-values-with-a-tfvars-file
+diff --git a/main.tf b/main.tf
+index ea665e1..22f7ce5 100644
+--- a/main.tf
++++ b/main.tf
+@@ -28,20 +28,24 @@ provider "google" {
+   project = var.project
+ }
+ 
+-# Init VPC network for Liquor instances.
+-module "liquor_network" {
++# Init VPC network for the Delivery server instances.
++module "delivery_network" {
+   source = "./modules/network"
+ 
+   project = var.project
+   regions = tolist([
+     var.region
+   ])
+-  vpc_name               = "liquor"
+-  allow_ingres_tcp_ports = local.adminPort != null ? [local.adminPort] : [8080]
++  vpc_name = "delivery"
++  # The Admin server port is opened only when the Admin server is enabled.
++  allow_ingres_tcp_ports = local.adminEnabled ? [coalesce(local.adminPort, 8080)] : []
+ }
+ 
+ locals {
+-  adminPort = try(nonsensitive(var.admin.port), null)
++  # The `admin` input is sensitive because of the password. Its `enabled` flag and `port`
++  # decide which firewall rules exist, and Terraform requires such values to be non-sensitive.
++  adminEnabled = nonsensitive(var.admin.enabled)
++  adminPort    = try(nonsensitive(var.admin.port), null)
+   adminSettings = [
+     { name = "ADMIN_SERVER", value = var.admin.enabled },
+     { name = "ADMIN_USERNAME", value = var.admin.login },
+@@ -57,24 +61,39 @@ module "instance_template" {
+ 
+   project             = var.project
+   region              = var.region
+-  network             = module.liquor_network.network
+-  subnetwork          = module.liquor_network.subnets[var.region]
++  network             = module.delivery_network.network
++  subnetwork          = module.delivery_network.subnets[var.region]
+   container           = var.container
+   machine_type        = var.vm_machine_type
+   env                 = concat(var.env, local.adminEnv)
+   additional_metadata = var.metadata
+ }
+ 
+-resource "google_compute_instance_from_template" "liquor-server" {
+-  name = "liquor-server"
++resource "google_compute_instance_from_template" "delivery-server" {
++  name = "delivery-server"
+   zone = var.zone
+ 
+   source_instance_template = module.instance_template.template.self_link
+ 
+   network_interface {
+-    subnetwork = module.liquor_network.subnets[var.region]
++    subnetwork = module.delivery_network.subnets[var.region]
+     access_config {
+       nat_ip = var.vm_address
+     }
+   }
+ }
++
++# Deployments created with the `SpineEventEngine/spine-liquor/google` module keep their
++# state mapped to the renamed addresses when they switch to this module. The VM and
++# the network are still replaced, because their names changed, but Terraform then
++# orders the replacement so that the old VM releases the static address before
++# the new one claims it.
++moved {
++  from = module.liquor_network
++  to   = module.delivery_network
++}
++
++moved {
++  from = google_compute_instance_from_template.liquor-server
++  to   = google_compute_instance_from_template.delivery-server
++}
+diff --git a/modules/instance-template/.terraform.lock.hcl b/modules/instance-template/.terraform.lock.hcl
+deleted file mode 100644
+index 6ef180a..0000000
+--- a/modules/instance-template/.terraform.lock.hcl
++++ /dev/null
+@@ -1,21 +0,0 @@
+-# This file is maintained automatically by "terraform init".
+-# Manual edits may be lost in future updates.
+-
+-provider "registry.terraform.io/hashicorp/google" {
+-  version     = "3.89.0"
+-  constraints = ">= 3.43.0, >= 3.86.0, < 4.0.0"
+-  hashes = [
+-    "h1:+C8w9B9aJMpALgmFnqZuHJk/pEDTHWkZ+IrNCEmjB+k=",
+-    "zh:208317c042622a4f761e96cb09871c57d7601ff5f21fc5952567d3940203cd93",
+-    "zh:227eb06659d5ecbc679de97ce130e8d7400ed0f04fb9e4d13869057ae2b1113e",
+-    "zh:267809935e07e78acfc28f1a0aab03d659c777bff5300ae818d76578eb3f3034",
+-    "zh:59c43802370a6e0893be34c50f036f4bc8dbd6a77475846f2c5ea0a2d522dbfa",
+-    "zh:66a482ef171381ca5d1d5037216db1688381cd72ba939a416b5c81e61352bac6",
+-    "zh:7314db9b6c529dc6d391ca852333229dc79ac2be460dc7410fb73cb038cd0672",
+-    "zh:79c051035bc5f0e019e650103109fab17051d1d33bffa4040bae5262820577cb",
+-    "zh:79f775b07d070a892fdde9c1eff01fe0a4473be2f8b188aea80ac709ce666352",
+-    "zh:7ab4db6ff5cb9ba8b7fbf17b789e9172548ef029a5c48c04cfa1f6c4926aaa88",
+-    "zh:9a0589b2e5da783158e81a4cfc611951a6248b456893cdfac3ded041d25ea6b2",
+-    "zh:f2a4a0a875ddff79016cb3f7f6705ef263caabb312836f999bfe56decdac673e",
+-  ]
+-}
+diff --git a/modules/instance-template/README.md b/modules/instance-template/README.md
+index be67f66..303780b 100644
+--- a/modules/instance-template/README.md
++++ b/modules/instance-template/README.md
+@@ -1,4 +1,4 @@
+-Liquor Instance Template
++Delivery Server Instance Template
+ ------
+ 
+ This is a Terraform module that allows to create a GCE Instance template from the
+diff --git a/modules/instance-template/main.tf b/modules/instance-template/main.tf
+index 50bd8b4..e0b5ded 100644
+--- a/modules/instance-template/main.tf
++++ b/modules/instance-template/main.tf
+@@ -26,27 +26,35 @@
+ 
+ locals {
+   container_image_project = var.image_project != "" ? var.image_project : var.project
++
++  # The registry host of the container image, for example `europe-docker.pkg.dev`.
++  container_registry = split("/", var.container)[0]
++
++  # The registry host when it is a Google one, Artifact Registry or Container Registry,
++  # so that the startup script configures the Docker credential helper for it.
++  # Empty for images hosted elsewhere.
++  google_registry = can(regex("(^|\\.)(pkg\\.dev|gcr\\.io)$", local.container_registry)) ? local.container_registry : ""
+ }
+ 
+ data "google_compute_default_service_account" "default" {
+   # The default service account of GCE instances
+ }
+ 
+-# Generates Instance Template for Liquor Server VMs.
++# Generates Instance Template for the Delivery server VMs.
+ #
+ # For details about all inputs, see the module docs:
+ # https://registry.terraform.io/modules/terraform-google-modules/vm/google/latest/submodules/instance_template
+ module "vm_instance_template" {
+   source  = "terraform-google-modules/vm/google//modules/instance_template"
+-  version = "~> 7.1"
++  version = "~> 15.2"
+ 
+   project_id          = var.project
+   region              = var.region
+-  name_prefix         = "liquor-${var.region}"
++  name_prefix         = "delivery-${var.region}"
+   preemptible         = false
+   on_host_maintenance = "MIGRATE"
+-  service_account     = {
+-    email  = data.google_compute_default_service_account.default.email
++  service_account = {
++    email = data.google_compute_default_service_account.default.email
+     scopes = [
+       "https://www.googleapis.com/auth/cloud-platform"
+     ]
+@@ -59,17 +67,18 @@ module "vm_instance_template" {
+   disk_size_gb         = 20
+   source_image_project = local.container_image_project
+   source_image_family  = var.image_family
+-  metadata             = merge(var.additional_metadata, tomap({
++  metadata = merge(var.additional_metadata, tomap({
+     "google-logging-enabled" = "true"
+   }))
+-  startup_script       = templatefile("${path.module}/startup.sh.tftpl", {
+-    container_name  = "liquor-server"
++  startup_script = templatefile("${path.module}/startup.sh.tftpl", {
++    container_name  = "delivery-server"
+     container_image = var.container
++    google_registry = local.google_registry
+     environment     = var.env
+   })
+ 
+   # See https://cloud.google.com/security/shielded-cloud/shielded-vm for details.
+-  enable_shielded_vm       = true
++  enable_shielded_vm = true
+   shielded_instance_config = {
+     "enable_integrity_monitoring" : true,
+     # Enabling this option causes failures during the application start.
+diff --git a/modules/instance-template/outputs.tf b/modules/instance-template/outputs.tf
+index 03eb839..b07f8c7 100644
+--- a/modules/instance-template/outputs.tf
++++ b/modules/instance-template/outputs.tf
+@@ -25,6 +25,6 @@
+ #
+ 
+ output "template" {
+-  description = "The Liquor server instance template."
++  description = "The Delivery server instance template."
+   value       = module.vm_instance_template
+ }
+diff --git a/modules/instance-template/startup.sh.tftpl b/modules/instance-template/startup.sh.tftpl
+index 08d2544..346d8bb 100644
+--- a/modules/instance-template/startup.sh.tftpl
++++ b/modules/instance-template/startup.sh.tftpl
+@@ -20,8 +20,13 @@ until docker info >/dev/null 2>&1; do
+   docker_wait_elapsed_secs=$((docker_wait_elapsed_secs + docker_wait_sleep_secs))
+ done
+ 
+-docker-credential-gcr configure-docker --registries=gcr.io
++%{ if google_registry != "" ~}
++# Let Docker authenticate to the Google registry hosting the image with the credentials
++# of the VM's service account. The published Delivery server image is public, but a
++# private image in a registry of the same kind needs this.
++docker-credential-gcr configure-docker --registries="${google_registry}"
+ 
++%{ endif ~}
+ docker stop "${container_name}" || true
+ docker rm "${container_name}" || true
+ 
+diff --git a/modules/instance-template/variables.tf b/modules/instance-template/variables.tf
+index 9d75a03..e7efaaf 100644
+--- a/modules/instance-template/variables.tf
++++ b/modules/instance-template/variables.tf
+@@ -61,7 +61,7 @@ variable "additional_metadata" {
+   default     = {}
+ }
+ 
+-variable image_project {
++variable "image_project" {
+   description = "The project of the GCE image."
+   type        = string
+   default     = "cos-cloud"
+diff --git a/modules/instance-template/versions.tf b/modules/instance-template/versions.tf
+index 579d916..968f5cc 100644
+--- a/modules/instance-template/versions.tf
++++ b/modules/instance-template/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # The `terraform-google-modules` modules used inside require Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }
+diff --git a/modules/network/.terraform.lock.hcl b/modules/network/.terraform.lock.hcl
+deleted file mode 100644
+index 6a29472..0000000
+--- a/modules/network/.terraform.lock.hcl
++++ /dev/null
+@@ -1,59 +0,0 @@
+-# This file is maintained automatically by "terraform init".
+-# Manual edits may be lost in future updates.
+-
+-provider "registry.terraform.io/hashicorp/google" {
+-  version     = "3.89.0"
+-  constraints = ">= 2.12.0, ~> 3.45, >= 3.86.0, < 4.0.0"
+-  hashes = [
+-    "h1:+C8w9B9aJMpALgmFnqZuHJk/pEDTHWkZ+IrNCEmjB+k=",
+-    "zh:208317c042622a4f761e96cb09871c57d7601ff5f21fc5952567d3940203cd93",
+-    "zh:227eb06659d5ecbc679de97ce130e8d7400ed0f04fb9e4d13869057ae2b1113e",
+-    "zh:267809935e07e78acfc28f1a0aab03d659c777bff5300ae818d76578eb3f3034",
+-    "zh:59c43802370a6e0893be34c50f036f4bc8dbd6a77475846f2c5ea0a2d522dbfa",
+-    "zh:66a482ef171381ca5d1d5037216db1688381cd72ba939a416b5c81e61352bac6",
+-    "zh:7314db9b6c529dc6d391ca852333229dc79ac2be460dc7410fb73cb038cd0672",
+-    "zh:79c051035bc5f0e019e650103109fab17051d1d33bffa4040bae5262820577cb",
+-    "zh:79f775b07d070a892fdde9c1eff01fe0a4473be2f8b188aea80ac709ce666352",
+-    "zh:7ab4db6ff5cb9ba8b7fbf17b789e9172548ef029a5c48c04cfa1f6c4926aaa88",
+-    "zh:9a0589b2e5da783158e81a4cfc611951a6248b456893cdfac3ded041d25ea6b2",
+-    "zh:f2a4a0a875ddff79016cb3f7f6705ef263caabb312836f999bfe56decdac673e",
+-  ]
+-}
+-
+-provider "registry.terraform.io/hashicorp/google-beta" {
+-  version     = "3.89.0"
+-  constraints = "~> 3.45"
+-  hashes = [
+-    "h1:kT38l+vDgN6aY+y9QBR1FQMQsUCjteVxYEJ4l36AtoU=",
+-    "zh:06002648b127aa5741fcddbf33088553ec0845fc9eb024605b491ff79e9cc74d",
+-    "zh:07d1b067185ff1deac958de2e3414553d265e000b34cf5014524898330e10b4f",
+-    "zh:3e3c3836df68e1ff01140d36af7e32b84232f4089666a4074a505793b0b73910",
+-    "zh:42f731398e7ca5d5850eec3de68a847455210a27510e83b85213ffb713432ce4",
+-    "zh:5dfeeddde4029a999cb82444659f38b96804d105d138614abb7e8bd05cfd7f67",
+-    "zh:725fac8088cc00b17985a43e40454bc9b8bcca2c50059b512ad24400a2a498fb",
+-    "zh:978d7f00c20ad8dda0d53e406f1ea756c59fb1a23d1794a3633ab203a4547aef",
+-    "zh:b4d3d8276d1679250576f4394a5a6c4dbf4543f4829e351fb0d344b88990b310",
+-    "zh:c6ce14e928fe755fb05c636e8bbc3dc3fe471103e5f5219c5dd924b30eea1022",
+-    "zh:f6a2d6815884f55f4cf0afb3ee18b51a73682ba0fec0ff0387b988248eb570fd",
+-    "zh:fb3dd2c29f78af8861ca1f5ef741dcbe9d47fe3d4a9445be4cbef82a42c3250b",
+-  ]
+-}
+-
+-provider "registry.terraform.io/hashicorp/random" {
+-  version = "3.1.0"
+-  hashes = [
+-    "h1:BZMEPucF+pbu9gsPk0G0BHx7YP04+tKdq2MrRDF1EDM=",
+-    "h1:EPIax4Ftp2SNdB9pUfoSjxoueDoLc/Ck3EUoeX0Dvsg=",
+-    "zh:2bbb3339f0643b5daa07480ef4397bd23a79963cc364cdfbb4e86354cb7725bc",
+-    "zh:3cd456047805bf639fbf2c761b1848880ea703a054f76db51852008b11008626",
+-    "zh:4f251b0eda5bb5e3dc26ea4400dba200018213654b69b4a5f96abee815b4f5ff",
+-    "zh:7011332745ea061e517fe1319bd6c75054a314155cb2c1199a5b01fe1889a7e2",
+-    "zh:738ed82858317ccc246691c8b85995bc125ac3b4143043219bd0437adc56c992",
+-    "zh:7dbe52fac7bb21227acd7529b487511c91f4107db9cc4414f50d04ffc3cab427",
+-    "zh:a3a9251fb15f93e4cfc1789800fc2d7414bbc18944ad4c5c98f466e6477c42bc",
+-    "zh:a543ec1a3a8c20635cf374110bd2f87c07374cf2c50617eee2c669b3ceeeaa9f",
+-    "zh:d9ab41d556a48bd7059f0810cf020500635bfc696c9fc3adab5ea8915c1d886b",
+-    "zh:d9e13427a7d011dbd654e591b0337e6074eef8c3b9bb11b2e39eaaf257044fd7",
+-    "zh:f7605bd1437752114baf601bdf6931debe6dc6bfe3006eb7e9bb9080931dca8a",
+-  ]
+-}
+diff --git a/modules/network/README.md b/modules/network/README.md
+index 4d8fba3..5ef2215 100644
+--- a/modules/network/README.md
++++ b/modules/network/README.md
+@@ -1,4 +1,4 @@
+-Liquor VPC
++Delivery VPC
+ -----------
+ 
+ This module is responsible for preparing a VPC network and subnetworks for the provided
+diff --git a/modules/network/main.tf b/modules/network/main.tf
+index 097a778..bea113a 100644
+--- a/modules/network/main.tf
++++ b/modules/network/main.tf
+@@ -37,7 +37,7 @@ locals {
+   region_list = tolist(var.regions)
+ 
+   # An object mapping GCP regions
+-  region_to_subnet_name = {for region in var.regions : region => "${var.vpc_name}-${region}"}
++  region_to_subnet_name = { for region in var.regions : region => "${var.vpc_name}-${region}" }
+ 
+   # The list of subnets in a VPC network. The subnet is represented as an object accepted by
+   # "terraform-google-network" module. See the form of a subnet input
+@@ -48,11 +48,11 @@ locals {
+   # to calculate a subnet address within given IP network address prefix of VPC. The index of a GCP region in
+   # a list of `local.region_list` is used as a subnet number.
+   subnets = toset([
+-  for i, region in local.region_list : {
+-    subnet_name   = local.region_to_subnet_name[region]
+-    subnet_ip     = cidrsubnet(var.cidrsubnet_ip_range, var.cidrsubnet_new_bits, i)
+-    subnet_region = region
+-  }
++    for i, region in local.region_list : {
++      subnet_name   = local.region_to_subnet_name[region]
++      subnet_ip     = cidrsubnet(var.cidrsubnet_ip_range, var.cidrsubnet_new_bits, i)
++      subnet_region = region
++    }
+   ])
+ }
+ 
+@@ -62,7 +62,7 @@ locals {
+ # of this module for details.
+ module "vpc" {
+   source  = "terraform-google-modules/network/google"
+-  version = "~> 3.4"
++  version = "~> 18.2"
+ 
+   project_id   = var.project
+   network_name = var.vpc_name
+@@ -73,73 +73,51 @@ module "vpc" {
+ 
+ # Generates a set of firewall rules for the custom VPC.
+ #
+-# See <a href="https://github.com/terraform-google-modules/terraform-google-network/tree/v3.4.0/modules/firewall-rules">docs</a>
++# See <a href="https://github.com/terraform-google-modules/terraform-google-network/tree/v18.2.0/modules/firewall-rules">docs</a>
+ # of this module for details.
+ module "firewall_rules" {
+   source       = "terraform-google-modules/network/google//modules/firewall-rules"
+-  version      = "~> 3.4"
++  version      = "~> 18.2"
+   project_id   = var.project
+   network_name = module.vpc.network_name
+ 
+-  rules = concat( [
++  # The rule names are derived from `var.vpc_name` rather than from the module output above:
++  # the output is unknown until the network is created, and Terraform needs the rule names,
++  # which key the firewall resources, to be known at plan time.
++  ingress_rules = concat([
+     {
+-      name                    = "${module.vpc.network_name}-allow-ssh-ingress"
+-      description             = "Allow SSH from anywhere."
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = ["0.0.0.0/0"]
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = null
+-      target_service_accounts = null
+-      allow                   = [
++      name          = "${var.vpc_name}-allow-ssh-ingress"
++      description   = "Allow SSH from anywhere."
++      source_ranges = ["0.0.0.0/0"]
++      allow = [
+         {
+           protocol = "tcp"
+           ports    = ["22"]
+         }
+       ]
+-      deny       = []
+-      log_config = null
+     },
+     {
+-      name                    = "${module.vpc.network_name}-allow-grpc"
+-      description             = "Allow gRPC ingress."
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = null
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = ["grpc"]
+-      target_service_accounts = null
+-      allow                   = [
++      name        = "${var.vpc_name}-allow-grpc"
++      description = "Allow gRPC ingress."
++      target_tags = ["grpc"]
++      allow = [
+         {
+           protocol = "tcp"
+           ports    = ["8484"]
+         }
+       ]
+-      deny       = []
+-      log_config = null
+-    }
+-  ], length(var.allow_ingres_tcp_ports) > 0 ?
+-  [
+-    {
+-      name                    = "${module.vpc.network_name}-allow-custom"
+-      description             = "Allow custom"
+-      direction               = "INGRESS"
+-      priority                = null
+-      ranges                  = null
+-      source_tags             = null
+-      source_service_accounts = null
+-      target_tags             = null
+-      target_service_accounts = null
+-      allow                   = [
+-        {
+-          protocol = "tcp"
+-          ports    = var.allow_ingres_tcp_ports
+-        }
+-      ]
+-      deny       = []
+-      log_config = null
+     }
++    ], length(var.allow_ingres_tcp_ports) > 0 ?
++    [
++      {
++        name        = "${var.vpc_name}-allow-custom"
++        description = "Allow custom"
++        allow = [
++          {
++            protocol = "tcp"
++            ports    = var.allow_ingres_tcp_ports
++          }
++        ]
++      }
+   ] : [])
+ }
+diff --git a/modules/network/versions.tf b/modules/network/versions.tf
+index 579d916..968f5cc 100644
+--- a/modules/network/versions.tf
++++ b/modules/network/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # The `terraform-google-modules` modules used inside require Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }
+diff --git a/outputs.tf b/outputs.tf
+index d778608..77833b5 100644
+--- a/outputs.tf
++++ b/outputs.tf
+@@ -24,12 +24,12 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #
+ 
+-output "liquor" {
+-  description = "The name of the created Liquor VM."
+-  value       = google_compute_instance_from_template.liquor-server.name
++output "server" {
++  description = "The name of the created Delivery server VM."
++  value       = google_compute_instance_from_template.delivery-server.name
+ }
+ 
+ output "network" {
+-  description = "A network created for the Liquor instances."
+-  value       = module.liquor_network
++  description = "The network created for the Delivery server."
++  value       = module.delivery_network
+ }
+diff --git a/variables.tf b/variables.tf
+index bd6b218..81585e5 100644
+--- a/variables.tf
++++ b/variables.tf
+@@ -25,22 +25,22 @@
+ #
+ 
+ variable "project" {
+-  description = "The ID of Google Cloud Project where the Liquor will be deployed."
++  description = "The ID of the Google Cloud project where the Delivery server will be deployed."
+   type        = string
+ }
+ 
+ variable "region" {
+-  description = "The GCP region of an Liquor instance group zone."
++  description = "The GCP region to place the Delivery server resources in."
+   type        = string
+ }
+ 
+ variable "zone" {
+-  description = "The GCP zone where instance group must be placed."
++  description = "The GCP zone where the Delivery server VM must be placed."
+   type        = string
+ }
+ 
+ variable "container" {
+-  description = "The GCE container image FQN to be used by the Liquor instances."
++  description = "The full name of the Delivery server container image to run on the VM."
+   type        = string
+ }
+ 
+@@ -50,18 +50,18 @@ variable "vm_address" {
+ }
+ 
+ variable "vm_machine_type" {
+-  description = "The GCE VM machine type to be used for the Liquor instances."
++  description = "The GCE VM machine type to be used for the Delivery server."
+   type        = string
+   default     = "e2-highcpu-2"
+ }
+ 
+ variable "env" {
+   description = <<EOT
+-    Environment variables to set for the Liquor server.
++    Environment variables to set for the Delivery server.
+ 
+-    Please pay attention that the effect will depend on the particular image used.
+-    As an example the `MAX_INBOUND_MESSAGE_SIZE` and `SHARD_PROCESSING_TIMEOUT` are only accepted by
+-    the `simple-server` implementation and will not affect the behaviour of the `server`.
++    The variables the server reads, such as `MAX_INBOUND_MESSAGE_SIZE`, `SHARD_PROCESSING_TIMEOUT`,
++    `USE_REDIS`, and `REDIS_HOST`, are described in the server documentation:
++    https://github.com/SpineEventEngine/delivery/blob/master/server/README.md
+   EOT
+   type        = list(object({ name = string, value = string }))
+   default     = []
+@@ -75,12 +75,12 @@ variable "metadata" {
+ 
+ variable "admin" {
+   description = <<EOT
+-    Configuration for the Admin Server of the Liquor image.
++    Configuration for the Admin Server of the Delivery server image.
+     The guide on how to provide sensitive data to the template and avoid passing it to the VCS:
+     https://developer.hashicorp.com/terraform/tutorials/configuration-language/sensitive-variables#set-values-with-a-tfvars-file
+   EOT
+   sensitive   = true
+-  type        = object({
++  type = object({
+     enabled  = bool
+     port     = optional(number)
+     login    = optional(string)
+diff --git a/versions.tf b/versions.tf
+index 579d916..f979ec9 100644
+--- a/versions.tf
++++ b/versions.tf
+@@ -25,9 +25,20 @@
+ #
+ 
+ terraform {
+-  required_version = ">= 1.0.0, < 2.0.0"
++  # `optional()` object attributes, used by the `admin` input, need Terraform 1.3.
++  required_version = ">= 1.3.0, < 2.0.0"
+ 
+   required_providers {
+-    google = ">= 3.86.0, < 4.0.0"
++    google = {
++      source = "hashicorp/google"
++      # The upper bound follows the `terraform-google-modules` modules used inside.
++      version = ">= 6.28.0, < 8.0.0"
++    }
++    # Not used directly, but required by the `terraform-google-modules` modules used inside.
++    # Declared so that the requirement is visible to the consumers of this module.
++    google-beta = {
++      source  = "hashicorp/google-beta"
++      version = ">= 6.28.0, < 8.0.0"
++    }
+   }
+ }

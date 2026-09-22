@@ -1,0 +1,287 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Terraform PR Scoring</title>
+<style>
+  :root { --red:#c0392b; --yellow:#b7791f; --green:#2f855a; --grey:#718096;
+          --line:#e2e8f0; --bg:#fff; --fg:#1a202c; --muted:#4a5568;
+          --row-red:rgba(192,57,43,.07); --row-yellow:rgba(250,204,21,.22); }
+  @media (prefers-color-scheme: dark) {
+    :root { --line:#2d3748; --bg:#1a202c; --fg:#e2e8f0; --muted:#a0aec0;
+            --red:#fc8181; --yellow:#f6e05e; --green:#68d391; --grey:#a0aec0;
+            --row-red:rgba(252,129,129,.10); --row-yellow:rgba(250,204,21,.15); }
+  }
+  /* Author rules beat the browser's built-in [hidden] { display:none }, so any
+     element given an explicit display needs this or the attribute does nothing. The
+     refresh button learned that the hard way. */
+  [hidden] { display:none !important; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start;
+         gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+  .toolbar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .filters { display:flex; gap:6px; flex-wrap:wrap; }
+  /* The refresh prompt. Deliberately the only accented control on the page, because it
+     is the one thing here that is asking for a decision rather than offering a view. */
+  #banner { border-color:var(--yellow); color:var(--yellow); font-weight:600; }
+  #banner:hover { background:var(--yellow); color:var(--bg); }
+  .toolbar button, .filters button { font:inherit; font-size:13px; padding:4px 10px; border-radius:14px;
+                    border:1px solid var(--line); background:transparent;
+                    color:var(--muted); cursor:pointer; display:inline-flex;
+                    align-items:center; gap:6px; }
+  .filters button:hover { color:var(--fg); }
+  .filters button.on { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  .filters button .n { opacity:.65; font-variant-numeric:tabular-nums; }
+  table { border-collapse:collapse; width:100%; }
+  th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.04em;
+       color:var(--muted); border-bottom:1px solid var(--line); padding:8px;
+       cursor:pointer; user-select:none; white-space:nowrap; }
+  th:hover { color:var(--fg); }
+  th .arrow { opacity:.45; font-size:10px; }
+  td { border-bottom:1px solid var(--line); padding:8px; vertical-align:top; }
+  /* Green is the default and gets no highlight. Only the rows that want attention
+     are tinted, so the eye goes to them rather than to everything at once. */
+  tr.worst-red { background:var(--row-red); }
+  tr.worst-yellow { background:var(--row-yellow); }
+  /* Rows that never got a verdict: no .tf changes, too large, a fetch that failed.
+     They still have to be here, because a pull request that silently vanished would
+     look like a bug, but they should not compete with the ones that need attention.
+     Fading the whole row rather than just the text keeps the grey badges in step.
+     Hover restores it, so a recessive row is still readable when you want it. */
+  tr.unreviewed { opacity:.45; transition:opacity .12s ease; }
+  tr.unreviewed:hover { opacity:1; }
+  /* The emoji is the light, so no pill behind it. The word is still on hover and in
+     aria-label, which is what carries the meaning when colour alone will not. */
+  .light { font-size:17px; line-height:1; }
+  .light.red{background:var(--red)} .light.yellow{background:var(--yellow)}
+  .light.green{background:var(--green)} .light.none{background:var(--grey)}
+  a { color:inherit; }
+  .meta { color:var(--muted); font-size:12px; }
+  .when { white-space:nowrap; font-variant-numeric:tabular-nums; }
+  details { margin-top:6px; }
+  summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .finding { border-left:2px solid var(--line); padding:4px 0 4px 10px; margin:6px 0; }
+  pre { background:rgba(128,128,128,.14); padding:6px 8px; border-radius:4px;
+        overflow-x:auto; margin:4px 0; font-size:12px; white-space:pre-wrap; }
+  .bad { color:var(--red); font-weight:600; }
+</style>
+
+<div class="top">
+  <div>
+    <h1>Terraform PR Scoring</h1>
+    <div class="sub" id="sub">loading</div>
+  </div>
+  <div class="toolbar">
+    <button id="banner" hidden></button>
+    <span class="filters" id="filters"></span>
+  </div>
+</div>
+<table>
+  <thead><tr id="head"></tr></thead>
+  <tbody id="body"></tbody>
+</table>
+
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const LIGHT = { red: "\u{1F534}", yellow: "\u{1F7E1}", green: "\u{1F7E2}", none: "\u2796" };
+const LABEL = { red: "red", yellow: "yellow", green: "green", none: "not evaluated" };
+
+function light(c) {
+  const key = c in LIGHT ? c : "none";
+  return `<span class="light" title="${LABEL[key]}" role="img"`
+       + ` aria-label="${LABEL[key]}">${LIGHT[key]}</span>`;
+}
+
+// Worst first, so sorting a colour column ascending puts red at the top. Sorting these
+// alphabetically would give green, red, yellow, which is not an order anyone wants.
+const COLOUR_RANK = { red: 0, yellow: 1, green: 2 };
+const rank = c => (c in COLOUR_RANK ? COLOUR_RANK[c] : 3);
+
+const worst = r => rank(r.impact_color) <= rank(r.security_color)
+  ? r.impact_color : r.security_color;
+
+// Which filter bucket a row belongs to. A row with no colours at all was never
+// evaluated, so it lands in "none" rather than being silently unfilterable.
+const bucket = r => (worst(r) in LIGHT ? worst(r) : "none");
+
+// Nothing selected means show everything, which keeps the common case one click away
+// rather than requiring you to select three buckets to see the whole queue.
+const FILTERS = [
+  { key: "red", label: "Red" },
+  { key: "yellow", label: "Yellow" },
+  { key: "green", label: "Green" },
+  { key: "none", label: "Not evaluated" },
+];
+const active = new Set();
+
+const visible = () =>
+  active.size ? rows.filter(r => active.has(bucket(r))) : rows;
+
+function when(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString(undefined,
+    { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// A finding that failed verification is shown, not hidden. The whole point of checking
+// evidence in code is being able to say which claims survived it.
+function findings(blob) {
+  if (!blob || !blob.findings || !blob.findings.length) return "";
+  return blob.findings.map(f => `
+    <div class="finding">
+      <div>${esc(f.category)} <span class="meta">severity ${esc(f.severity)}</span>
+        ${f.verification !== "ok" ? `<span class="bad">${esc(f.verification)}</span>` : ""}</div>
+      <div>${esc(f.explanation)}</div>
+      <pre>${esc(f.evidence)}</pre>
+      <div class="meta">${esc(f.verified_path || f.file)}</div>
+    </div>`).join("");
+}
+
+function detail(r) {
+  if (r.status !== "reviewed") return `<span class="meta">${esc(r.reason)}</span>`;
+  const inner = findings(r.impact) + findings(r.security);
+  const how = r.model
+    ? `${esc(r.model)}, ${r.model_seconds}s${r.retried ? ", retried" : ""}`
+    : `decided by rule (${esc(r.reason)})`;
+  const key = `${r.repo}#${r.pr_number}`;
+  return (inner ? `<details data-key="${esc(key)}"><summary>findings</summary>${inner}</details>` : "")
+       + `<div class="meta">${how}</div>`;
+}
+
+// Every column sorts. The key function returns something comparable, so colours sort by
+// severity and the timestamp sorts by its real value rather than its formatted text.
+const COLUMNS = [
+  { id: "impact",   label: "Impact",       key: r => rank(r.impact_color) },
+  { id: "security", label: "Security",     key: r => rank(r.security_color) },
+  { id: "pr",       label: "Pull request", key: r => `${r.repo}#${r.pr_number}`.toLowerCase() },
+  { id: "when",     label: "Reviewed",     key: r => r.reviewed_at || "" },
+  { id: "detail",   label: "Detail",       key: r => `${r.status}/${r.reason || ""}` },
+];
+
+let rows = [];
+// Newest first. The queue is something you watch, so the most recently decided pull
+// request is the one you have not seen yet. Sort by any column to change it.
+let sort = { id: "when", dir: -1 };
+
+function compare(a, b) {
+  const col = COLUMNS.find(c => c.id === sort.id);
+  const x = col.key(a), y = col.key(b);
+  if (x < y) return -1 * sort.dir;
+  if (x > y) return 1 * sort.dir;
+  // Stable tiebreak so equal rows do not shuffle between renders.
+  return (b.reviewed_at || "").localeCompare(a.reviewed_at || "");
+}
+
+function renderFilters() {
+  const counts = {};
+  for (const r of rows) counts[bucket(r)] = (counts[bucket(r)] || 0) + 1;
+
+  document.getElementById("filters").innerHTML = FILTERS.map(f => `
+    <button data-key="${f.key}" class="${active.has(f.key) ? "on" : ""}"
+            aria-pressed="${active.has(f.key)}">
+      ${LIGHT[f.key]} ${f.label} <span class="n">${counts[f.key] || 0}</span>
+    </button>`).join("");
+
+  document.querySelectorAll(".filters button").forEach(b => b.onclick = () => {
+    const key = b.dataset.key;
+    active.has(key) ? active.delete(key) : active.add(key);
+    render();
+  });
+}
+
+function renderSummary(shown) {
+  const n = c => rows.filter(r => r.impact_color === c || r.security_color === c).length;
+  const all = `${rows.length} pull requests: ${n("red")} red, ${n("yellow")} yellow, ` +
+              `${rows.filter(r => r.status !== "reviewed").length} not reviewed`;
+  document.getElementById("sub").textContent = active.size
+    ? `showing ${shown} of ${rows.length}. ${all}`
+    : `${all}. Click a column to sort.`;
+}
+
+function render() {
+  renderFilters();
+  document.getElementById("head").innerHTML = COLUMNS.map(c => {
+    const active = sort.id === c.id;
+    const arrow = active ? (sort.dir === 1 ? "▲" : "▼") : "";
+    return `<th data-id="${c.id}">${c.label} <span class="arrow">${arrow}</span></th>`;
+  }).join("");
+
+  document.querySelectorAll("th").forEach(th => th.onclick = () => {
+    const id = th.dataset.id;
+    sort = { id, dir: sort.id === id ? -sort.dir : 1 };
+    render();
+  });
+
+  const shown = visible();
+  renderSummary(shown.length);
+  // Always derived from `pending`, so applying an update clears the prompt for free.
+  renderBanner();
+
+  document.getElementById("body").innerHTML = [...shown].sort(compare).map(r => {
+    const w = worst(r);
+    const cls = [
+      w === "red" ? "worst-red" : w === "yellow" ? "worst-yellow" : "",
+      r.status === "reviewed" ? "" : "unreviewed",
+    ].filter(Boolean).join(" ");
+    return `
+    <tr class="${cls}">
+      <td>${light(r.impact_color)}</td>
+      <td>${light(r.security_color)}</td>
+      <td><a href="${esc(r.html_url)}">${esc(r.repo)}#${esc(r.pr_number)}</a>
+          <div class="meta">${esc(r.title)}</div>
+          <div class="meta">${esc(r.author)} &middot; ${esc((r.head_sha || "").slice(0, 8))}</div></td>
+      <td class="when meta">${esc(when(r.reviewed_at))}</td>
+      <td>${detail(r)}</td>
+    </tr>`;
+  }).join("");
+}
+
+// Auto-refresh, but never at the cost of losing your place.
+//
+// A redraw replaces the table, which closes any expanded findings and shifts whatever
+// you were reading. So new data is only applied on its own when that cannot matter:
+// nothing is expanded and you are at the top of the page. Otherwise it waits behind a
+// button and you decide when to take it. Cheaper than trying to restore scroll position
+// and open sections after the fact, and it cannot get that restoration subtly wrong.
+const POLL_MS = 15000;
+let pending = null;
+
+// Enough to notice a new row or a re-review, without stringifying the whole payload.
+const signature = data =>
+  data.length + "|" + data.reduce((m, r) => (r.reviewed_at > m ? r.reviewed_at : m), "");
+
+function applyPending() {
+  if (!pending) return;   // nothing queued; never let rows become null
+  rows = pending;
+  pending = null;
+  render();
+}
+
+function renderBanner() {
+  const el = document.getElementById("banner");
+  if (!pending) { el.hidden = true; return; }
+  const extra = pending.length - rows.length;
+  el.hidden = false;
+  el.textContent = extra > 0 ? `${extra} new · refresh` : "updated · refresh";
+}
+
+function poll() {
+  fetch("/api/reviews").then(r => r.json()).then(data => {
+    if (rows.length && signature(data) === signature(rows)) return;
+    const safe = !document.querySelector("details[open]") && window.scrollY < 40;
+    if (safe && !pending) { rows = data; render(); return; }
+    pending = data;
+    renderBanner();
+  }).catch(e => {
+    document.getElementById("sub").textContent = "could not load /api/reviews: " + e;
+  });
+}
+
+document.getElementById("banner").onclick = applyPending;
+poll();
+setInterval(poll, POLL_MS);
+</script>

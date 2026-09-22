@@ -1,0 +1,287 @@
+# tf-pr-reviewer: Terraform pull request reviewer.
+#
+#   docker compose up
+#
+# Defaults to replay mode, so no GitHub token and no API key are needed.
+# Image tags are pinned deliberately. "latest" makes a cold start unreproducible,
+# which is the one thing a reviewer will notice.
+#
+# Services arriving in later steps: connect (ingest and sink), service (reasoning),
+# web (review queue). Compose stays runnable at every step.
+
+name: tf-pr-reviewer
+
+services:
+  # ---------------------------------------------------------------- broker
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.3.17
+    container_name: tfpr-redpanda
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      # A base Mac mini has 16GB and Ollama wants about 7GB of it. Redpanda does
+      # not need more than this for a single-node demo, and capping it keeps the
+      # container runtime's VM small enough to leave room for the model.
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+      # Two listeners on purpose. Containers reach the broker at redpanda:9092.
+      # The host (rpk, psql, your editor) reaches it at localhost:19092. A single
+      # listener advertising "redpanda:9092" is unreachable from the host, and one
+      # advertising "localhost:9092" is unreachable from other containers.
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"   # Kafka API, from the host
+      - "9644:9644"     # admin API, for rpk cluster health
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health -X brokers=localhost:9092 | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # One-shot. Creating topics up front means a consumer that starts first does not
+  # race auto-creation and end up with the wrong partition count.
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.3.17
+    container_name: tfpr-redpanda-init
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        rpk topic create pr.candidates -p 1 -r 1 -X brokers=redpanda:9092 || true
+        rpk topic create pr.reviews    -p 1 -r 1 -X brokers=redpanda:9092 || true
+        echo "topics ready:"
+        rpk topic list -X brokers=redpanda:9092
+    restart: "no"
+
+  # ---------------------------------------------------------------- storage
+  postgres:
+    image: postgres:16.15-alpine
+    container_name: tfpr-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tfpr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfpr}
+      POSTGRES_DB: ${POSTGRES_DB:-tfpr}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Scripts here run only when the data directory is empty. Editing the schema
+      # and re-running "docker compose up" does nothing; you need "down -v" first.
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tfpr} -d ${POSTGRES_DB:-tfpr}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ---------------------------------------------------------------- ingest
+  # Reads recorded Search API pages (replay, the default) or polls GitHub (live).
+  # INGEST_MODE picks the config file, so the two paths are separate readable files
+  # rather than one config full of conditionals. Below the input the two are identical,
+  # dedupe included, so replay rehearses the whole live path.
+  #
+  # Long-running: both modes poll. Replay re-reads the same recording and its dedupe
+  # suppresses every pass after the first, so it publishes 16 records once and then
+  # stays quiet. Restarting it republishes, because the dedupe cache is in-process.
+  connect-ingest:
+    image: docker.redpanda.com/redpandadata/connect:4.109.0
+    container_name: tfpr-connect-ingest
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - ./connect:/connect:ro
+      - ./fixtures:/fixtures:ro
+    command: ["run", "/connect/ingest-${INGEST_MODE:-replay}.yaml"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- reasoning
+  # Consumes pr.candidates, reviews each one, produces to pr.reviews.
+  #
+  # One review at a time: the two model calls for a pull request share a prompt prefix
+  # that Ollama only reuses when they arrive back to back, so concurrency would cost
+  # more than it bought. Redpanda holds the backlog instead.
+  service:
+    build: ./service
+    container_name: tfpr-service
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      # Read-only, and only to ask whether a commit already has a verdict.
+      postgres:
+        condition: service_healthy
+      # Only present when COMPOSE_PROFILES=bundled-llm. required:false means this is
+      # honoured when the bundled model is in play and ignored when it is not.
+      #
+      # Without it the service starts while the 5.5GB model is still downloading,
+      # fails every review with model_timeout, and commits those offsets. The Connect
+      # dedupe then suppresses the same page on the next poll, so nothing is ever
+      # retried and a reviewer's first run is 16 permanent errors.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      POSTGRES_USER: ${POSTGRES_USER:-tfpr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfpr}
+      POSTGRES_DB: ${POSTGRES_DB:-tfpr}
+      CANDIDATES_TOPIC: pr.candidates
+      REVIEWS_TOPIC: pr.reviews
+      CONSUMER_GROUP: tf-pr-reviewer
+      # Same switch the ingest uses, so the service reads recorded diffs when replay
+      # is on and calls GitHub when it is not.
+      INGEST_MODE: ${INGEST_MODE:-replay}
+      FIXTURES_DIR: /fixtures
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Defaults to Ollama running natively on the Mac, which is the development path
+      # and the only one with GPU access. .env.example points this at the bundled
+      # container instead, for reviewers who would rather install nothing.
+      # ollama (default, local, no account) or anthropic (hosted, needs a key).
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+      ANTHROPIC_MAX_TOKENS: ${ANTHROPIC_MAX_TOKENS:-16000}
+      ANTHROPIC_CONTEXT_LIMIT: ${ANTHROPIC_CONTEXT_LIMIT:-200000}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-}
+      ANTHROPIC_FALLBACKS: ${ANTHROPIC_FALLBACKS:-true}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      MODEL: ${MODEL:-qwen3.5:9b}
+      OLLAMA_THINK: ${OLLAMA_THINK:-false}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-3000}
+      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0}
+      OLLAMA_PRESENCE_PENALTY: ${OLLAMA_PRESENCE_PENALTY:-0}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-900}
+    volumes:
+      # Replay reads recorded diffs from here instead of calling GitHub (step 5).
+      - ./fixtures:/fixtures:ro
+    restart: unless-stopped
+
+  # Consumes pr.reviews and upserts into Postgres. Connect does the write so the
+  # reasoning service stays free of database concerns, and a Postgres outage backs up
+  # on the topic rather than losing reviews.
+  connect-sink:
+    image: docker.redpanda.com/redpandadata/connect:4.109.0
+    container_name: tfpr-connect-sink
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tfpr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfpr}
+      POSTGRES_DB: ${POSTGRES_DB:-tfpr}
+    volumes:
+      - ./connect:/connect:ro
+    command: ["run", "/connect/sink-postgres.yaml"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- serve
+  # The review queue, ranked worst first. Two routes, one query, no framework.
+  web:
+    build: ./web
+    container_name: tfpr-web
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tfpr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfpr}
+      POSTGRES_DB: ${POSTGRES_DB:-tfpr}
+      WEB_PORT: 8080
+    ports:
+      - "${WEB_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=3).status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- inspect
+  # Redpanda's own UI for browsing topics, messages and consumer groups. Nothing in
+  # the pipeline depends on it; it is a window onto the broker, useful for showing
+  # what is actually on a topic and how far behind the reasoning service is.
+  #
+  # On by default. To run without it:  docker compose up --scale console=0
+  # (which is why this service has no container_name: --scale and a fixed name
+  # cannot both apply.)
+  console:
+    image: docker.redpanda.com/redpandadata/console:v3.11.0
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "${CONSOLE_HOST_PORT:-8081}:8080"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- model
+  # Bundled Ollama, for reviewers who do not want to install anything.
+  # Enabled by COMPOSE_PROFILES=bundled-llm, which .env.example sets by default.
+  #
+  # On macOS this runs CPU-only, because Docker cannot reach the Metal GPU. It works
+  # but it is slow. For development, run Ollama natively, leave this profile off, and
+  # point OLLAMA_URL at http://host.docker.internal:11434.
+  #
+  # The port is deliberately not published: nothing on the host needs it, and
+  # publishing 11434 would collide with a native Ollama already listening there.
+  ollama:
+    image: ollama/ollama:0.34.0
+    container_name: tfpr-ollama
+    profiles: ["bundled-llm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # One-shot. About 5.5GB on first run, cached in the ollama-models volume after.
+  ollama-pull:
+    image: ollama/ollama:0.34.0
+    container_name: tfpr-ollama-pull
+    profiles: ["bundled-llm"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "pulling ${MODEL:-qwen3.5:9b} (about 5.5GB on first run)"
+        ollama pull "${MODEL:-qwen3.5:9b}"
+        echo "model ready"
+    restart: "no"
+
+volumes:
+  redpanda-data:
+  postgres-data:
+  ollama-models:

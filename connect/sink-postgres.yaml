@@ -1,0 +1,80 @@
+# pr.reviews -> Postgres, upserted on (repo, pr_number).
+#
+# Connect does the write, not the service. The service produces a result and stops
+# caring what happens to it, which keeps the reasoning code free of database concerns
+# and means a Postgres outage backs up on the topic instead of losing reviews.
+#
+# Upsert rather than insert: a new head commit re-reviews the same pull request, and
+# the queue shows current state, so the row is replaced rather than duplicated. It also
+# makes the service's at-least-once delivery harmless, since a redelivered review
+# rewrites the same row.
+
+input:
+  kafka_franz:
+    seed_brokers: [ redpanda:9092 ]
+    topics: [ pr.reviews ]
+    consumer_group: pg-sink
+    # Pick up everything already on the topic on a first run, not just new messages.
+    start_from_oldest: true
+
+output:
+  sql_raw:
+    driver: postgres
+    dsn: postgres://${POSTGRES_USER:-tfpr}:${POSTGRES_PASSWORD:-tfpr}@postgres:5432/${POSTGRES_DB:-tfpr}?sslmode=disable
+    query: |
+      INSERT INTO reviews (
+        repo, pr_number, head_sha, title, author, html_url, pr_updated_at,
+        status, reason, impact_color, security_color, impact, security,
+        model, model_seconds, retried, done_reason, prompt_tokens
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12::jsonb, $13::jsonb,
+        $14, $15, $16, $17, $18
+      )
+      ON CONFLICT (repo, pr_number) DO UPDATE SET
+        head_sha       = EXCLUDED.head_sha,
+        title          = EXCLUDED.title,
+        author         = EXCLUDED.author,
+        html_url       = EXCLUDED.html_url,
+        pr_updated_at  = EXCLUDED.pr_updated_at,
+        status         = EXCLUDED.status,
+        reason         = EXCLUDED.reason,
+        impact_color   = EXCLUDED.impact_color,
+        security_color = EXCLUDED.security_color,
+        impact         = EXCLUDED.impact,
+        security       = EXCLUDED.security,
+        model          = EXCLUDED.model,
+        model_seconds  = EXCLUDED.model_seconds,
+        retried        = EXCLUDED.retried,
+        done_reason    = EXCLUDED.done_reason,
+        prompt_tokens  = EXCLUDED.prompt_tokens,
+        reviewed_at    = now()
+    args_mapping: |
+      # Order must match the placeholders above. The service already produces exactly
+      # these 18 keys, named for these columns, so this is a projection with no renaming.
+      # tests/test_record_shape.py fails if the two ever drift apart.
+      root = [
+        this.repo,
+        this.pr_number,
+        this.head_sha,
+        this.title,
+        this.author,
+        this.html_url,
+        this.pr_updated_at,
+        this.status,
+        this.reason,
+        this.impact_color,
+        this.security_color,
+        # jsonb columns take text and cast. A null has to stay a real null rather than
+        # becoming the four-character string "null".
+        if this.impact == null { null } else { this.impact.string() },
+        if this.security == null { null } else { this.security.string() },
+        this.model,
+        this.model_seconds,
+        this.retried,
+        this.done_reason,
+        this.prompt_tokens
+      ]
+
+logger:
+  level: INFO

@@ -1,0 +1,13 @@
+# Kafka client. librdkafka underneath, and the client Redpanda's own docs use.
+confluent-kafka==2.6.1
+# HTTP for the GitHub enrichment fetch in live mode.
+httpx==0.28.1
+# Tests. Run with: docker compose run --rm --volume ./tests:/app/tests service \
+#   python -m pytest tests -q
+pytest==8.3.4
+# Read-only, and only to ask whether a commit already has a verdict. Connect does
+# every write to Postgres.
+psycopg[binary]==3.2.3
+# Hosted model provider, used only when MODEL_PROVIDER=anthropic. The default path is
+# local Ollama over plain HTTP and does not touch this.
+anthropic==1.6.0

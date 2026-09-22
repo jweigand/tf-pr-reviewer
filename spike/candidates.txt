@@ -1,0 +1,22 @@
+# Candidate PRs for the held-out set, found by keyword search. Format: repo PR hint
+# The hint is what the title suggests; triage.sh checks whether the diff actually shows it.
+nickdemianchuk/github-ops                          12    rename, maybe moved blocks
+SpineEventEngine/terraform-google-delivery         5     module rename
+pagopa/io-infra                                    1996  split resources, maybe moved blocks
+wellcomecollection/terraform-aws-vhs               22    new optional inputs
+n8n-io/terraform-aws-n8n                           104   new input with a default
+n8n-io/terraform-aws-n8n                           98    default behavior change?
+nullplatform/tofu-modules                          581   pinned versions, default change?
+comet-ml/terraform-aws-comet-stsaas                58    SG rules made unconditional
+AlgeaCare/gb-terragrunt-modules                    1     prevent destroy added
+dbildungsplattform/infra-terraform-modules         64    prevent destroy mechanism
+GoogleCloudPlatform/cloud-foundation-fabric        4158  deletion_policy support
+osinfra-io/pt-arche-kubernetes-authentik           6     remove unused locals (harmless?)
+osinfra-io/pt-arche-kubernetes-cert-manager        73    inline Helm values (harmless?)
+gjed/terraform-github-config-as-yaml               48    deprecated argument migration
+bernadin-kabore/platform-demo-terraform-modules    3     IAM changes
+ministryofjustice/modernisation-platform           13964 broader permissions
+pbs-common/terraform-aws-vm-migration              23    admin access via SSM
+skyhawk-security/terraform-azure-onboarding        16    storage hardening
+tbadmus/tech-challenge                             9     retire dead config
+ministryofjustice/modernisation-platform-environments 19090 debug mode in TEST

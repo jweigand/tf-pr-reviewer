@@ -1,0 +1,19 @@
+# Golden set for phase0 evaluation.
+# Format: repo  PR  impact=<color>  security=<color>  # note
+# Colors: green | yellow | red. Use ? until you have read the diff and decided.
+# Label from the diff alone, before looking at model output, or the labels will drift toward the model.
+
+padok-team/terraform-azurerm-postgresql-server       15   impact=red  security=yellow  # fixture 1: removed module inputs; literal password under examples/
+ministryofjustice/cloud-platform-environments        45463 impact=green   security=green       # "decommission NEC pipeline in prod namespace": likely red impact (removals in prod)
+atul-devops-lab/POC-application-infra                13   impact=green    security=green       # "Increase max and desired size of EKS node group": likely green on both
+Federated-Engineers/elite-cloud-infrastructures      123  impact=green    security=red       # "Modify security group rule": security test, direction unknown
+gitpod-io/terraform-aws-ona-runner                   44   impact=yellow    security=green       # "default-deny restricted runner egress": an improvement, should not be a security finding
+foggykitchen/foggykitchen-landing-zone-orchestrator  7    impact=red    security=green       # "Rename Azure database pattern": rename, are there moved blocks?
+
+# Future test case, not evaluated today (only a .tfvars change, which phase0 filters out):
+#   BernardoJose90/Terraform-platform 240: one-line flip of networking_enabled to false.
+#   Title says "Prod", but the file is under member-accounts/development/. Needs the .tf
+#   files that consume the variable to judge; a good target for enrichment later.
+
+# Alternate if one of the above is too large or has no .tf changes:
+# ministryofjustice/modernisation-platform-environments 19090 impact=? security=?  # "enable debug mode in TEST for ZAP tests": context judgment

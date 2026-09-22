@@ -1,0 +1,62 @@
+diff --git a/examples/azure/database/postgresql/private_access/basic/main.tf b/examples/azure/database/postgresql/private_access/delegated_subnet/main.tf
+similarity index 82%
+rename from examples/azure/database/postgresql/private_access/basic/main.tf
+rename to examples/azure/database/postgresql/private_access/delegated_subnet/main.tf
+index 879777e..b70eda7 100644
+--- a/examples/azure/database/postgresql/private_access/basic/main.tf
++++ b/examples/azure/database/postgresql/private_access/delegated_subnet/main.tf
+@@ -1,5 +1,5 @@
+ module "landing_zone" {
+-  source = "../../../../../../patterns/azure/database_private_access"
++  source = "../../../../../../patterns/azure/postgresql_private_access"
+ 
+   payload_file = "${path.module}/landing-zone.yaml"
+   payload_template_vars = {
+diff --git a/examples/azure/database/postgresql/private_access/basic/outputs.tf b/examples/azure/database/postgresql/private_access/delegated_subnet/outputs.tf
+similarity index 100%
+rename from examples/azure/database/postgresql/private_access/basic/outputs.tf
+rename to examples/azure/database/postgresql/private_access/delegated_subnet/outputs.tf
+diff --git a/examples/azure/database/postgresql/private_access/basic/providers.tf b/examples/azure/database/postgresql/private_access/delegated_subnet/providers.tf
+similarity index 100%
+rename from examples/azure/database/postgresql/private_access/basic/providers.tf
+rename to examples/azure/database/postgresql/private_access/delegated_subnet/providers.tf
+diff --git a/examples/azure/database/postgresql/private_access/basic/variables.tf b/examples/azure/database/postgresql/private_access/delegated_subnet/variables.tf
+similarity index 100%
+rename from examples/azure/database/postgresql/private_access/basic/variables.tf
+rename to examples/azure/database/postgresql/private_access/delegated_subnet/variables.tf
+diff --git a/examples/azure/database/postgresql/private_access/basic/versions.tf b/examples/azure/database/postgresql/private_access/delegated_subnet/versions.tf
+similarity index 100%
+rename from examples/azure/database/postgresql/private_access/basic/versions.tf
+rename to examples/azure/database/postgresql/private_access/delegated_subnet/versions.tf
+diff --git a/patterns/azure/database_private_access/locals.tf b/patterns/azure/postgresql_private_access/locals.tf
+similarity index 100%
+rename from patterns/azure/database_private_access/locals.tf
+rename to patterns/azure/postgresql_private_access/locals.tf
+diff --git a/patterns/azure/database_private_access/main.tf b/patterns/azure/postgresql_private_access/main.tf
+similarity index 98%
+rename from patterns/azure/database_private_access/main.tf
+rename to patterns/azure/postgresql_private_access/main.tf
+index 16981aa..ac21b7f 100644
+--- a/patterns/azure/database_private_access/main.tf
++++ b/patterns/azure/postgresql_private_access/main.tf
+@@ -10,7 +10,7 @@ resource "terraform_data" "scope_guardrails" {
+   lifecycle {
+     precondition {
+       condition     = local.private_access_mode == "delegated_subnet"
+-      error_message = "database_private_access currently supports only private_access.mode = \"delegated_subnet\"."
++      error_message = "postgresql_private_access currently supports only private_access.mode = \"delegated_subnet\"."
+     }
+ 
+     precondition {
+diff --git a/patterns/azure/database_private_access/outputs.tf b/patterns/azure/postgresql_private_access/outputs.tf
+similarity index 100%
+rename from patterns/azure/database_private_access/outputs.tf
+rename to patterns/azure/postgresql_private_access/outputs.tf
+diff --git a/patterns/azure/database_private_access/variables.tf b/patterns/azure/postgresql_private_access/variables.tf
+similarity index 100%
+rename from patterns/azure/database_private_access/variables.tf
+rename to patterns/azure/postgresql_private_access/variables.tf
+diff --git a/patterns/azure/database_private_access/versions.tf b/patterns/azure/postgresql_private_access/versions.tf
+similarity index 100%
+rename from patterns/azure/database_private_access/versions.tf
+rename to patterns/azure/postgresql_private_access/versions.tf
